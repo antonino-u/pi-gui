@@ -1,0 +1,554 @@
+import { randomBytes } from "node:crypto";
+import { mkdir, readFile, writeFile, chmod, rename } from "node:fs/promises";
+import http, { type IncomingMessage, type ServerResponse } from "node:http";
+import net from "node:net";
+import os from "node:os";
+import path from "node:path";
+import type { Duplex } from "node:stream";
+import { WebSocket, WebSocketServer } from "ws";
+import { BROWSER_ACCESS_PREFIX } from "../../contracts/browser-access";
+import { bridgeScript, browserClientScript } from "./browser-scripts";
+import {
+  isAllowedHost,
+  isLocalPeer,
+  isSameOrigin,
+  localHostnames,
+  readCookie,
+  secretsEqual,
+} from "./host-guard";
+
+/** A hidden host window that renders for one browser tab. */
+export interface BrowserBridgeWindow {
+  isDestroyed(): boolean;
+  destroy(): void;
+  onClosed(listener: () => void): void;
+}
+
+export type BrowserAccessRendererSource =
+  | { readonly kind: "directory"; readonly root: string }
+  | { readonly kind: "dev-server"; readonly url: string };
+
+export interface BrowserAccessServerOptions {
+  /** Interface to listen on. `127.0.0.1` keeps access on this machine. */
+  readonly host: string;
+  readonly port: number;
+  /** Where the pairing token is kept (readable by this user only). */
+  readonly tokenFile: string;
+  readonly renderer: BrowserAccessRendererSource;
+  /** Extra names (for example a local DNS name) that browsers may use to reach this host. */
+  readonly extraHostnames?: readonly string[];
+  readonly openBridgeWindow: (url: string) => BrowserBridgeWindow;
+  /** How long a disconnected tab keeps its window, so a reload or network blip resumes it. */
+  readonly reconnectGraceMs?: number;
+  readonly maxTabs?: number;
+}
+
+interface TabRecord {
+  readonly id: string;
+  readonly secret: string;
+  readonly window: BrowserBridgeWindow;
+  instance?: string;
+  client?: WebSocket;
+  bridge?: WebSocket;
+  resumed: boolean;
+  graceTimer?: ReturnType<typeof setTimeout>;
+}
+
+const COOKIE_NAME = "pi_gui_browser";
+const ID_PATTERN = /^[a-f0-9]{32}$/;
+const MAX_FRAME_BYTES = 64 * 1024 * 1024;
+const CONTENT_TYPES: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".ico": "image/x-icon",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".ttf": "font/ttf",
+  ".wasm": "application/wasm",
+  ".map": "application/json; charset=utf-8",
+};
+
+const BASE_HEADERS = {
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "no-referrer",
+  "X-Frame-Options": "DENY",
+} as const;
+
+async function loadOrCreateToken(tokenFile: string): Promise<string> {
+  try {
+    const parsed = JSON.parse(await readFile(tokenFile, "utf8")) as { token?: unknown };
+    if (typeof parsed.token === "string" && /^[a-f0-9]{64}$/.test(parsed.token)) {
+      return parsed.token;
+    }
+  } catch {
+    // Missing or unreadable: create a new token below.
+  }
+  const token = randomBytes(32).toString("hex");
+  await mkdir(path.dirname(tokenFile), { recursive: true });
+  const temporary = `${tokenFile}.${process.pid}.tmp`;
+  await writeFile(temporary, `${JSON.stringify({ version: 1, token }, null, 2)}\n`, {
+    mode: 0o600,
+  });
+  await chmod(temporary, 0o600);
+  await rename(temporary, tokenFile);
+  return token;
+}
+
+function injectClientScript(html: string): string {
+  const tag = `<script src="${BROWSER_ACCESS_PREFIX}/client.js"></script>`;
+  const head = /<head[^>]*>/i.exec(html);
+  if (!head) return tag + html;
+  const end = head.index + head[0].length;
+  return html.slice(0, end) + tag + html.slice(end);
+}
+
+function rawText(data: Buffer | ArrayBuffer | Buffer[]): string {
+  if (Array.isArray(data)) return Buffer.concat(data).toString("utf8");
+  return Buffer.from(data as ArrayBuffer).toString("utf8");
+}
+
+function sendPlain(response: ServerResponse, status: number, message: string): void {
+  response.writeHead(status, {
+    ...BASE_HEADERS,
+    "Content-Type": "text/plain; charset=utf-8",
+    "Cache-Control": "no-store",
+  });
+  response.end(message);
+}
+
+function rejectUpgrade(socket: Duplex, status: number, reason: string): void {
+  socket.write(`HTTP/1.1 ${status} ${reason}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+  socket.destroy();
+}
+
+/**
+ * Serves pi-gui's renderer to browsers and connects each browser tab to a hidden bridge
+ * window on this host. The bridge window loads the real preload, so every request passes
+ * through the same IPC handlers, validation and per-window view as a desktop window.
+ *
+ * Access requires a token: the pairing link sets it as an HttpOnly cookie. Every request
+ * must name this machine in its Host header, and sockets must come from this origin.
+ */
+export class BrowserAccessServer {
+  private readonly server = http.createServer((request, response) => {
+    void this.handleRequest(request, response).catch((error: unknown) => {
+      console.error("[browser-access] request failed", error);
+      if (!response.headersSent) sendPlain(response, 500, "Internal error");
+      else response.destroy();
+    });
+  });
+  private readonly clientSockets = new WebSocketServer({
+    noServer: true,
+    maxPayload: MAX_FRAME_BYTES,
+    perMessageDeflate: { threshold: 1024 },
+  });
+  private readonly bridgeSockets = new WebSocketServer({
+    noServer: true,
+    maxPayload: MAX_FRAME_BYTES,
+  });
+  private readonly tabs = new Map<string, TabRecord>();
+  private readonly allowedHosts: ReadonlySet<string>;
+  private token = "";
+  private boundPort = 0;
+
+  constructor(private readonly options: BrowserAccessServerOptions) {
+    this.allowedHosts = localHostnames(options.extraHostnames);
+    this.server.on("upgrade", (request, socket, head) => {
+      this.handleUpgrade(request, socket, head);
+    });
+  }
+
+  async start(): Promise<void> {
+    this.token = await loadOrCreateToken(this.options.tokenFile);
+    await new Promise<void>((resolve, reject) => {
+      this.server.once("error", reject);
+      this.server.listen(this.options.port, this.options.host, () => {
+        this.server.off("error", reject);
+        resolve();
+      });
+    });
+    const address = this.server.address();
+    this.boundPort = typeof address === "object" && address ? address.port : this.options.port;
+  }
+
+  async stop(): Promise<void> {
+    for (const tab of [...this.tabs.values()]) this.closeTab(tab);
+    this.clientSockets.close();
+    this.bridgeSockets.close();
+    await new Promise<void>((resolve) => this.server.close(() => resolve()));
+  }
+
+  get port(): number {
+    return this.boundPort;
+  }
+
+  /** Links that pair a browser. Anyone holding one can use pi-gui as this user. */
+  pairingUrls(): string[] {
+    const hosts = this.isWildcardHost()
+      ? Object.values(os.networkInterfaces())
+          .flatMap((infos) => infos ?? [])
+          .filter((info) => info.family === "IPv4" && !info.internal)
+          .map((info) => info.address)
+      : [this.options.host];
+    if (hosts.length === 0) hosts.push("127.0.0.1");
+    return hosts.map(
+      (host) =>
+        `http://${host.includes(":") ? `[${host}]` : host}:${this.boundPort}${BROWSER_ACCESS_PREFIX}/pair?token=${this.token}`,
+    );
+  }
+
+  private isWildcardHost(): boolean {
+    return this.options.host === "0.0.0.0" || this.options.host === "::";
+  }
+
+  /** The address a bridge window on this host uses to reach the server. */
+  private bridgeOrigin(): string {
+    if (this.isWildcardHost()) return `127.0.0.1:${this.boundPort}`;
+    const host = this.options.host.includes(":") ? `[${this.options.host}]` : this.options.host;
+    return `${host}:${this.boundPort}`;
+  }
+
+  private isPaired(request: IncomingMessage): boolean {
+    return secretsEqual(readCookie(request.headers.cookie, COOKIE_NAME), this.token);
+  }
+
+  private async handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    if (!isAllowedHost(request.headers.host, this.allowedHosts)) {
+      sendPlain(response, 421, "Unknown host");
+      return;
+    }
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      sendPlain(response, 405, "Method not allowed");
+      return;
+    }
+    const url = new URL(request.url ?? "/", "http://host.invalid");
+
+    if (url.pathname === `${BROWSER_ACCESS_PREFIX}/pair`) {
+      if (!secretsEqual(url.searchParams.get("token") ?? undefined, this.token)) {
+        sendPlain(response, 403, "This pairing link is not valid.");
+        return;
+      }
+      response.writeHead(302, {
+        ...BASE_HEADERS,
+        "Set-Cookie": `${COOKIE_NAME}=${this.token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=31536000`,
+        "Cache-Control": "no-store",
+        Location: "/",
+      });
+      response.end();
+      return;
+    }
+
+    if (url.pathname === `${BROWSER_ACCESS_PREFIX}/bridge`) {
+      this.serveBridgePage(request, response, url);
+      return;
+    }
+
+    if (!this.isPaired(request)) {
+      sendPlain(
+        response,
+        403,
+        "This browser is not paired with pi-gui. Open a pairing link from pi-gui.",
+      );
+      return;
+    }
+
+    if (url.pathname === `${BROWSER_ACCESS_PREFIX}/client.js`) {
+      response.writeHead(200, {
+        ...BASE_HEADERS,
+        "Content-Type": "text/javascript; charset=utf-8",
+        "Cache-Control": "no-store",
+      });
+      response.end(request.method === "HEAD" ? undefined : browserClientScript);
+      return;
+    }
+
+    if (this.options.renderer.kind === "dev-server") {
+      this.proxyToDevServer(request, response, this.options.renderer.url);
+      return;
+    }
+    await this.serveRendererFile(request, response, this.options.renderer.root, url.pathname);
+  }
+
+  private serveBridgePage(request: IncomingMessage, response: ServerResponse, url: URL): void {
+    const tab = this.tabs.get(url.searchParams.get("tab") ?? "");
+    if (
+      !tab ||
+      !isLocalPeer(request.socket.remoteAddress) ||
+      !secretsEqual(url.searchParams.get("key") ?? undefined, tab.secret)
+    ) {
+      sendPlain(response, 403, "Forbidden");
+      return;
+    }
+    const socketUrl = `ws://${this.bridgeOrigin()}${BROWSER_ACCESS_PREFIX}/bridge-socket?tab=${tab.id}&key=${tab.secret}`;
+    response.writeHead(200, {
+      ...BASE_HEADERS,
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+    });
+    response.end(
+      `<!doctype html><html><head><meta charset="utf-8"><title>pi-gui bridge</title></head><body><script>${bridgeScript(socketUrl)}</script></body></html>`,
+    );
+  }
+
+  private async serveRendererFile(
+    request: IncomingMessage,
+    response: ServerResponse,
+    root: string,
+    pathname: string,
+  ): Promise<void> {
+    let relative: string;
+    try {
+      relative = decodeURIComponent(pathname === "/" ? "/index.html" : pathname);
+    } catch {
+      sendPlain(response, 400, "Bad path");
+      return;
+    }
+    const resolvedRoot = path.resolve(root);
+    const filePath = path.resolve(resolvedRoot, `.${path.posix.normalize(relative)}`);
+    if (filePath !== resolvedRoot && !filePath.startsWith(resolvedRoot + path.sep)) {
+      sendPlain(response, 404, "Not found");
+      return;
+    }
+    let body: Buffer;
+    try {
+      body = await readFile(filePath);
+    } catch {
+      sendPlain(response, 404, "Not found");
+      return;
+    }
+    const extension = path.extname(filePath).toLowerCase();
+    const isHtml = extension === ".html";
+    const payload = isHtml ? Buffer.from(injectClientScript(body.toString("utf8"))) : body;
+    response.writeHead(200, {
+      ...BASE_HEADERS,
+      "Content-Type": CONTENT_TYPES[extension] ?? "application/octet-stream",
+      "Content-Length": payload.length,
+      "Cache-Control": isHtml ? "no-store" : "no-cache",
+    });
+    response.end(request.method === "HEAD" ? undefined : payload);
+  }
+
+  private proxyToDevServer(
+    request: IncomingMessage,
+    response: ServerResponse,
+    devUrl: string,
+  ): void {
+    const target = new URL(devUrl);
+    const headers = { ...request.headers, host: target.host };
+    delete headers.cookie;
+    delete headers["accept-encoding"];
+    const upstream = http.request(
+      {
+        host: target.hostname,
+        port: target.port,
+        method: request.method,
+        path: request.url,
+        headers,
+      },
+      (upstreamResponse) => {
+        const contentType = String(upstreamResponse.headers["content-type"] ?? "");
+        if (!contentType.includes("text/html")) {
+          response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.headers);
+          upstreamResponse.pipe(response);
+          return;
+        }
+        const chunks: Buffer[] = [];
+        upstreamResponse.on("data", (chunk: Buffer) => chunks.push(chunk));
+        upstreamResponse.on("end", () => {
+          const html = injectClientScript(Buffer.concat(chunks).toString("utf8"));
+          const { "content-length": _length, ...rest } = upstreamResponse.headers;
+          response.writeHead(upstreamResponse.statusCode ?? 200, {
+            ...rest,
+            "cache-control": "no-store",
+          });
+          response.end(html);
+        });
+      },
+    );
+    upstream.on("error", () => {
+      if (!response.headersSent)
+        sendPlain(response, 502, "The development server is not reachable.");
+    });
+    request.pipe(upstream);
+  }
+
+  private handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): void {
+    if (!isAllowedHost(request.headers.host, this.allowedHosts)) {
+      rejectUpgrade(socket, 421, "Misdirected Request");
+      return;
+    }
+    const url = new URL(request.url ?? "/", "http://host.invalid");
+    if (url.pathname === `${BROWSER_ACCESS_PREFIX}/bridge-socket`) {
+      this.upgradeBridge(request, socket, head, url);
+      return;
+    }
+    if (!isSameOrigin(request.headers.origin, request.headers.host)) {
+      rejectUpgrade(socket, 403, "Forbidden");
+      return;
+    }
+    if (url.pathname === `${BROWSER_ACCESS_PREFIX}/socket`) {
+      this.upgradeClient(request, socket, head, url);
+      return;
+    }
+    // Development only: let the renderer's hot-reload socket reach the dev server.
+    if (this.options.renderer.kind === "dev-server" && this.isPaired(request)) {
+      this.proxyUpgradeToDevServer(request, socket, head, this.options.renderer.url);
+      return;
+    }
+    rejectUpgrade(socket, 404, "Not Found");
+  }
+
+  private upgradeClient(request: IncomingMessage, socket: Duplex, head: Buffer, url: URL): void {
+    const tabId = url.searchParams.get("tab") ?? "";
+    const instance = url.searchParams.get("instance") ?? "";
+    this.clientSockets.handleUpgrade(request, socket, head, (client) => {
+      if (!this.isPaired(request)) {
+        client.close(4003, "Not paired");
+        return;
+      }
+      if (!ID_PATTERN.test(tabId) || !ID_PATTERN.test(instance)) {
+        client.close(4000, "Bad request");
+        return;
+      }
+      this.attachClient(tabId, instance, client);
+    });
+  }
+
+  private attachClient(tabId: string, instance: string, client: WebSocket): void {
+    let tab = this.tabs.get(tabId);
+    if (tab && tab.window.isDestroyed()) {
+      this.closeTab(tab);
+      tab = undefined;
+    }
+    if (tab?.client && tab.client.readyState === WebSocket.OPEN && tab.instance !== instance) {
+      client.close(4001, "Tab in use");
+      return;
+    }
+    if (!tab) {
+      if (this.tabs.size >= (this.options.maxTabs ?? 8)) {
+        client.close(4002, "Too many browser tabs");
+        return;
+      }
+      tab = this.openTab(tabId);
+    } else {
+      tab.resumed = true;
+    }
+    if (tab.graceTimer) clearTimeout(tab.graceTimer);
+    tab.graceTimer = undefined;
+    const previous = tab.client;
+    tab.client = client;
+    tab.instance = instance;
+    if (previous && previous !== client) previous.close(4001, "Replaced");
+    const record = tab;
+
+    client.on("message", (data) => {
+      // Only calls go to the bridge; the bridge validates the member and its arguments.
+      const text = rawText(data);
+      let frame: { t?: unknown };
+      try {
+        frame = JSON.parse(text) as { t?: unknown };
+      } catch {
+        return;
+      }
+      if (frame.t === "call" && record.bridge?.readyState === WebSocket.OPEN) {
+        record.bridge.send(text);
+      }
+    });
+    client.on("close", () => {
+      if (record.client !== client) return;
+      record.client = undefined;
+      record.graceTimer = setTimeout(
+        () => this.closeTab(record),
+        this.options.reconnectGraceMs ?? 60_000,
+      );
+    });
+    client.on("error", () => client.terminate());
+    if (record.bridge?.readyState === WebSocket.OPEN) this.announceReady(record);
+  }
+
+  private announceReady(tab: TabRecord): void {
+    if (tab.client?.readyState === WebSocket.OPEN) {
+      tab.client.send(JSON.stringify({ t: "ready", resumed: tab.resumed }));
+    }
+  }
+
+  private openTab(tabId: string): TabRecord {
+    const secret = randomBytes(32).toString("hex");
+    const url = `http://${this.bridgeOrigin()}${BROWSER_ACCESS_PREFIX}/bridge?tab=${tabId}&key=${secret}`;
+    // The window loads the bridge page asynchronously, after the record below is registered.
+    const window = this.options.openBridgeWindow(url);
+    const record: TabRecord = { id: tabId, secret, resumed: false, window };
+    this.tabs.set(tabId, record);
+    window.onClosed(() => {
+      if (this.tabs.get(tabId) === record) this.closeTab(record);
+    });
+    return record;
+  }
+
+  private closeTab(tab: TabRecord): void {
+    if (this.tabs.get(tab.id) === tab) this.tabs.delete(tab.id);
+    if (tab.graceTimer) clearTimeout(tab.graceTimer);
+    tab.client?.close(1012, "Window closed");
+    tab.bridge?.close();
+    if (!tab.window.isDestroyed()) tab.window.destroy();
+  }
+
+  private upgradeBridge(request: IncomingMessage, socket: Duplex, head: Buffer, url: URL): void {
+    const tab = this.tabs.get(url.searchParams.get("tab") ?? "");
+    if (
+      !tab ||
+      tab.bridge ||
+      !isLocalPeer(request.socket.remoteAddress) ||
+      !secretsEqual(url.searchParams.get("key") ?? undefined, tab.secret)
+    ) {
+      rejectUpgrade(socket, 403, "Forbidden");
+      return;
+    }
+    this.bridgeSockets.handleUpgrade(request, socket, head, (bridge) => {
+      tab.bridge = bridge;
+      bridge.on("message", (data) => {
+        if (tab.client?.readyState === WebSocket.OPEN) tab.client.send(rawText(data));
+      });
+      bridge.on("close", () => {
+        if (tab.bridge === bridge) this.closeTab(tab);
+      });
+      bridge.on("error", () => bridge.terminate());
+      this.announceReady(tab);
+    });
+  }
+
+  private proxyUpgradeToDevServer(
+    request: IncomingMessage,
+    socket: Duplex,
+    head: Buffer,
+    devUrl: string,
+  ): void {
+    const target = new URL(devUrl);
+    const upstream = net.connect(Number(target.port) || 80, target.hostname, () => {
+      const lines = [`${request.method ?? "GET"} ${request.url ?? "/"} HTTP/1.1`];
+      for (let index = 0; index < request.rawHeaders.length; index += 2) {
+        const name = request.rawHeaders[index] ?? "";
+        const value = request.rawHeaders[index + 1] ?? "";
+        const lower = name.toLowerCase();
+        if (lower === "cookie") continue;
+        lines.push(
+          `${name}: ${lower === "host" ? target.host : lower === "origin" ? target.origin : value}`,
+        );
+      }
+      upstream.write(`${lines.join("\r\n")}\r\n\r\n`);
+      if (head.length > 0) upstream.write(head);
+      socket.pipe(upstream).pipe(socket);
+    });
+    upstream.on("error", () => socket.destroy());
+    socket.on("error", () => upstream.destroy());
+  }
+}

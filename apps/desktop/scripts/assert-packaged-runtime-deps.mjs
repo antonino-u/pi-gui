@@ -81,6 +81,7 @@ const requiredPackages = [
   "typebox",
   "undici",
   "which",
+  "ws",
   "yaml",
   "yargs",
 ];

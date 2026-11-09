@@ -27,6 +27,11 @@ import { augmentPosixPath } from "../scripts/augment-path.cjs";
 import { DesktopAppStore } from "./application/app-store";
 import { TOOL_IMAGE_SCHEME } from "../contracts/tool-output-images";
 import { WindowOwner } from "./windows/window-owner";
+import {
+  BrowserAccessServer,
+  type BrowserBridgeWindow,
+} from "./browser-access/browser-access-server";
+import { parseBrowserAccessConfig } from "./browser-access/browser-access-config";
 import { PendingComposerDraftFlusher } from "./windows/pending-draft-flush";
 import { windowChromeArguments, windowChromeOptions } from "./windows/window-chrome";
 import { TurnCheckpointStore } from "./workbench/checkpoint-store";
@@ -109,6 +114,7 @@ let mainWindow: BrowserWindow | null = null;
 let notificationManager: NotificationManager | undefined;
 let notificationPermissionService: NotificationPermissionService | undefined;
 let terminalService: TerminalService | undefined;
+let browserAccessServer: BrowserAccessServer | undefined;
 let integratedTerminalShell = "";
 let applicationRelaunchRequested = false;
 
@@ -671,6 +677,67 @@ function createWindow(): BrowserWindow {
   }
 
   return window;
+}
+
+/**
+ * A hidden window that renders for one browser tab. It loads the real preload, so the tab's
+ * requests use the same IPC handlers and per-window view as a desktop window. It never
+ * navigates and never becomes the active window.
+ */
+function createBrowserBridgeWindow(url: string): BrowserBridgeWindow {
+  const window = new BrowserWindow({
+    show: false,
+    width: 1280,
+    height: 900,
+    webPreferences: {
+      preload: path.join(__dirname, "..", "preload", "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      backgroundThrottling: false,
+    },
+  });
+  const webContentsId = window.webContents.id;
+  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  window.webContents.on("will-navigate", (event) => event.preventDefault());
+  window.webContents.on("will-frame-navigate", (event) => {
+    if (!event.isMainFrame) event.preventDefault();
+  });
+  windowOwner.add(window, windowOwner.foregroundView(), { remote: true });
+  themeManager.trackWindow(window);
+  window.once("closed", () => {
+    windowOwner.remove(window);
+    terminalService?.disposeWebContents(webContentsId);
+  });
+  void window.loadURL(url).catch((error: unknown) => {
+    console.error("[main] browser bridge loadURL failed", error);
+    if (!window.isDestroyed()) window.destroy();
+  });
+  return {
+    isDestroyed: () => window.isDestroyed(),
+    destroy: () => window.destroy(),
+    onClosed: (listener) => window.once("closed", listener),
+  };
+}
+
+async function startBrowserAccess(): Promise<void> {
+  const config = parseBrowserAccessConfig(process.env);
+  if (!config) return;
+  const server = new BrowserAccessServer({
+    host: config.host,
+    port: config.port,
+    extraHostnames: config.extraHostnames,
+    tokenFile: path.join(app.getPath("userData"), "browser-access.json"),
+    renderer:
+      isDev && process.env.ELECTRON_RENDERER_URL
+        ? { kind: "dev-server", url: process.env.ELECTRON_RENDERER_URL }
+        : { kind: "directory", root: path.join(__dirname, "..", "renderer") },
+    openBridgeWindow: createBrowserBridgeWindow,
+  });
+  await server.start();
+  browserAccessServer = server;
+  console.log("[main] Browser access is on. Open a pairing link in a browser:");
+  for (const url of server.pairingUrls()) console.log(`  ${url}`);
 }
 
 function createAppWindow(sourceView?: DesktopAppViewState): BrowserWindow {
@@ -1250,9 +1317,13 @@ app
     void notificationPermissionService.getCurrentStatus().catch((error: unknown) => {
       console.error("[main] getCurrentStatus failed", error);
     });
+    void startBrowserAccess().catch((error: unknown) => {
+      console.error("[main] Browser access failed to start", error);
+    });
 
     app.on("activate", () => {
-      if (BrowserWindow.getAllWindows().length === 0) {
+      // Browser bridge windows are hidden, so they do not count as open windows.
+      if (BrowserWindow.getAllWindows().every((window) => windowOwner.isRemote(window))) {
         createAppWindow();
         if (notificationPermissionService) {
           void notificationPermissionService.getCurrentStatus().catch((error: unknown) => {
@@ -1288,6 +1359,10 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", (event) => {
+  browserAccessServer?.stop().catch((error: unknown) => {
+    console.error("[main] Browser access failed to stop", error);
+  });
+  browserAccessServer = undefined;
   stopNotifications?.();
   stopNotifications = undefined;
   notificationManager = undefined;
