@@ -6,26 +6,37 @@ import {
 } from "../../contracts/browser-access";
 
 /**
- * Scripts the host serves to browsers. They are plain JavaScript strings, not bundled
- * functions, so a bundler cannot inject helpers that would be undefined in the page.
+ * Scripts and documents the host serves to browsers. Scripts are plain JavaScript strings,
+ * not bundled functions, so a bundler cannot inject helpers that would be undefined in the
+ * page.
  */
 
-const sharedConfig = JSON.stringify({
+const sharedConfig = {
   prefix: BROWSER_ACCESS_PREFIX,
   call: browserAccessCallMembers,
   event: browserAccessEventMembers,
   blocked: browserAccessBlockedMembers,
-});
+};
+
+/** JSON turns undefined arguments into null, which IPC validators reject; this keeps them. */
+const argumentCodec = `
+  const UNDEFINED = { __piUndefined: true };
+  const encodeArgs = (args) => args.map((arg) => (arg === undefined ? UNDEFINED : arg));
+  const decodeArgs = (args) => args.map((arg) => (arg && typeof arg === "object" && arg.__piUndefined === true ? undefined : arg));
+`;
 
 /**
  * Runs in the browser tab before the renderer bundle. It installs `window.piApp` with the
  * same members as the desktop preload. Calls and events travel over one WebSocket to the
  * tab's bridge window on the host; members that only make sense on the host's own screen
- * are answered locally or rejected.
+ * are answered locally or rejected. Notifications use Web Push through a service worker.
  */
-export const browserClientScript = `(() => {
+export function browserClientScript(options: { readonly pushPublicKey: string }): string {
+  const config = JSON.stringify({ ...sharedConfig, pushPublicKey: options.pushPublicKey });
+  return `(() => {
   "use strict";
-  const config = ${sharedConfig};
+  const config = ${config};
+  ${argumentCodec}
   const TAB_KEY = "pi-browser-tab";
   const randomId = () => {
     const bytes = new Uint8Array(16);
@@ -55,20 +66,22 @@ export const browserClientScript = `(() => {
     listeners.get(member).add(listener);
     return () => listeners.get(member)?.delete(listener);
   };
-  const send = (frame) => {
-    if (ready && socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(frame));
-    else outbox.push(frame);
+  const sendNow = (frame) => {
+    if (ready && socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify(frame));
+      return true;
+    }
+    return false;
   };
-  // JSON turns an undefined argument into null, which the host's validators reject, so
-  // undefined arguments travel as a marker.
-  const UNDEFINED = { __piUndefined: true };
-  const encodeArgs = (args) => args.map((arg) => (arg === undefined ? UNDEFINED : arg));
-  const decodeArgs = (args) => args.map((arg) => (arg && typeof arg === "object" && arg.__piUndefined === true ? undefined : arg));
-  const call = (member, args) => new Promise((resolve, reject) => {
+  const send = (frame) => { if (!sendNow(frame)) outbox.push(frame); };
+  const request = (type, member, args) => new Promise((resolve, reject) => {
     const id = nextId++;
     pending.set(id, { resolve, reject });
-    send({ t: "call", id, m: member, a: encodeArgs(args) });
+    send({ t: type, id, m: member, a: encodeArgs(args) });
   });
+  const call = (member, args) => request("call", member, args);
+  const hostCall = (member, args) => request("host", member, args);
+  const reportVisibility = () => sendNow({ t: "visibility", visible: document.visibilityState === "visible" });
 
   const resync = () => {
     call("getState", []).then((state) => emit("onStateChanged", [state])).catch(() => {});
@@ -93,8 +106,10 @@ export const browserClientScript = `(() => {
         attachedOnce = true;
         ready = true;
         retryDelay = 250;
+        reportVisibility();
         for (const queued of outbox.splice(0)) ws.send(JSON.stringify(queued));
         if (resuming) resync();
+        else onFirstReady();
       } else if (frame.t === "result") {
         const entry = pending.get(frame.id);
         if (!entry) return;
@@ -127,6 +142,75 @@ export const browserClientScript = `(() => {
       retryDelay = Math.min(retryDelay * 2, 5000);
     };
   };
+  document.addEventListener("visibilitychange", reportVisibility);
+
+  // Notifications: Web Push through a service worker. iOS offers it only in a web app added
+  // to the Home Screen, so elsewhere the status is "unsupported".
+  const pushSupported = () =>
+    window.isSecureContext && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  const permissionListeners = new Set();
+  const workerRegistration = pushSupported()
+    ? navigator.serviceWorker.register(config.prefix + "/sw.js", { scope: "/" }).catch((error) => {
+        console.error("[pi-browser] service worker registration failed", error);
+        return null;
+      })
+    : Promise.resolve(null);
+  const keyBytes = (base64url) => {
+    const base64 = base64url.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((base64url.length + 3) % 4);
+    return Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+  };
+  const permissionStatus = () => {
+    if (!pushSupported()) return "unsupported";
+    return Notification.permission === "granted" || Notification.permission === "denied" ? Notification.permission : "default";
+  };
+  const syncSubscription = async () => {
+    const registration = await workerRegistration;
+    if (!registration || Notification.permission !== "granted") return;
+    await navigator.serviceWorker.ready;
+    let subscription = await registration.pushManager.getSubscription();
+    const current = subscription?.options?.applicationServerKey;
+    if (subscription && current) {
+      const expected = keyBytes(config.pushPublicKey);
+      const actual = new Uint8Array(current);
+      if (actual.length !== expected.length || actual.some((byte, index) => byte !== expected[index])) {
+        // The host has a new key pair, so the old subscription can no longer be used.
+        await subscription.unsubscribe();
+        subscription = null;
+      }
+    }
+    if (!subscription) {
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: keyBytes(config.pushPublicKey),
+      });
+    }
+    await hostCall("pushSubscribe", [subscription.toJSON()]);
+  };
+  const notifyPermission = (status) => {
+    for (const listener of permissionListeners) {
+      try { listener(status); } catch (error) { console.error("[pi-browser] permission listener failed", error); }
+    }
+  };
+
+  const openSession = (session) => {
+    if (!session || typeof session.workspaceId !== "string" || typeof session.sessionId !== "string") return;
+    call("selectSession", [{ workspaceId: session.workspaceId, sessionId: session.sessionId }]).catch((error) => {
+      console.error("[pi-browser] could not open the notification's thread", error);
+    });
+  };
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.addEventListener("message", (event) => {
+      if (event.data && event.data.type === "pi-open-session") openSession(event.data.session);
+    });
+  }
+  const onFirstReady = () => {
+    const match = /^#pi-session=(.+)$/.exec(location.hash);
+    if (match) {
+      history.replaceState(null, "", location.pathname + location.search);
+      try { openSession(JSON.parse(decodeURIComponent(match[1]))); } catch {}
+    }
+    syncSubscription().catch((error) => console.error("[pi-browser] push subscription failed", error));
+  };
 
   const ua = navigator.userAgent;
   const platform = /Mac|iPhone|iPad|iPod/.test(ua) ? "darwin" : /Windows/.test(ua) ? "win32" : "linux";
@@ -138,9 +222,21 @@ export const browserClientScript = `(() => {
     versions: {},
     getPathForFile: () => "",
     readClipboardImage: () => ({ ok: false }),
-    getNotificationPermissionStatus: () => Promise.resolve("unsupported"),
-    requestNotificationPermission: () => Promise.resolve("unsupported"),
-    onNotificationPermissionStatusChanged: () => () => {},
+    getNotificationPermissionStatus: () => Promise.resolve(permissionStatus()),
+    requestNotificationPermission: () => {
+      if (!pushSupported()) return Promise.resolve("unsupported");
+      // Safari grants permission only from a tap, so ask before anything is awaited.
+      return Notification.requestPermission().then(async (result) => {
+        const status = permissionStatus();
+        if (result === "granted") await syncSubscription();
+        notifyPermission(status);
+        return status;
+      });
+    },
+    onNotificationPermissionStatusChanged: (listener) => {
+      permissionListeners.add(listener);
+      return () => permissionListeners.delete(listener);
+    },
     onPendingComposerDraftFlush: () => () => {},
     onExtensionViewOpenFile: () => () => {},
     onExtensionViewMessage: () => () => {},
@@ -175,6 +271,78 @@ export const browserClientScript = `(() => {
   connect();
 })();
 `;
+}
+
+/**
+ * Service worker for the browser app: shows each push as a notification and opens its
+ * thread when the notification is tapped. It never intercepts requests.
+ */
+export const serviceWorkerScript = `"use strict";
+self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
+self.addEventListener("push", (event) => {
+  let data = {};
+  try { data = event.data ? event.data.json() : {}; } catch {}
+  const title = typeof data.title === "string" && data.title ? data.title : "pi";
+  event.waitUntil(self.registration.showNotification(title, {
+    body: typeof data.body === "string" ? data.body : "",
+    tag: typeof data.tag === "string" ? data.tag : undefined,
+    icon: ${JSON.stringify(`${BROWSER_ACCESS_PREFIX}/icon.png`)},
+    data: { session: data.session },
+  }));
+});
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const session = event.notification.data && event.notification.data.session;
+  event.waitUntil((async () => {
+    const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    for (const client of windows) {
+      if ("focus" in client) {
+        await client.focus();
+        if (session) client.postMessage({ type: "pi-open-session", session });
+        return;
+      }
+    }
+    const hash = session ? "#pi-session=" + encodeURIComponent(JSON.stringify(session)) : "";
+    await self.clients.openWindow("/" + hash);
+  })());
+});
+`;
+
+/**
+ * Web app manifest. A paired browser gets the pairing link as its start URL: on iOS a Home
+ * Screen app keeps its own cookies, so launching it pairs it again.
+ */
+export function webAppManifest(options: { readonly startUrl: string }): string {
+  return JSON.stringify({
+    name: "pi",
+    short_name: "pi",
+    start_url: options.startUrl,
+    scope: "/",
+    display: "standalone",
+    background_color: "#1b1b1b",
+    theme_color: "#1b1b1b",
+    icons: [
+      {
+        src: `${BROWSER_ACCESS_PREFIX}/icon.png`,
+        sizes: "512x512",
+        type: "image/png",
+        purpose: "any",
+      },
+    ],
+  });
+}
+
+/** Tags added to the renderer's `<head>` for browsers. */
+export const browserHeadTags = [
+  `<script src="${BROWSER_ACCESS_PREFIX}/client.js"></script>`,
+  `<link rel="manifest" href="${BROWSER_ACCESS_PREFIX}/manifest.webmanifest" crossorigin="use-credentials">`,
+  `<link rel="apple-touch-icon" href="${BROWSER_ACCESS_PREFIX}/icon.png">`,
+  `<meta name="apple-mobile-web-app-capable" content="yes">`,
+  `<meta name="mobile-web-app-capable" content="yes">`,
+  `<meta name="apple-mobile-web-app-title" content="pi">`,
+  `<meta name="apple-mobile-web-app-status-bar-style" content="black">`,
+].join("");
 
 /**
  * Runs in a hidden bridge window on the host, next to the real preload. It invokes only
@@ -183,13 +351,11 @@ export const browserClientScript = `(() => {
 export function bridgeScript(socketUrl: string): string {
   return `(() => {
   "use strict";
-  const config = ${sharedConfig};
+  const config = ${JSON.stringify(sharedConfig)};
   const allowed = new Set(config.call);
   const api = window.piApp;
   const outbox = [];
-  const UNDEFINED = { __piUndefined: true };
-  const encodeArgs = (args) => args.map((arg) => (arg === undefined ? UNDEFINED : arg));
-  const decodeArgs = (args) => args.map((arg) => (arg && typeof arg === "object" && arg.__piUndefined === true ? undefined : arg));
+  ${argumentCodec}
   const socket = new WebSocket(${JSON.stringify(socketUrl)});
   const send = (frame) => {
     let text;

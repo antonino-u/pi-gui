@@ -27,6 +27,7 @@ test("browser access listens on this machine only by default", () => {
     host: "127.0.0.1",
     port: 7480,
     extraHostnames: [],
+    pushContact: "https://github.com/minghinmatthewlam/pi-gui",
   });
   expect(parseBrowserAccessConfig({ PI_APP_BROWSER_ACCESS: "9000" })).toMatchObject({
     host: "127.0.0.1",
@@ -40,11 +41,31 @@ test("browser access accepts an interface address and extra hostnames", () => {
       PI_APP_BROWSER_ACCESS: "10.0.0.5:8080",
       PI_APP_BROWSER_ACCESS_HOSTNAMES: " studio.home.arpa , ",
     }),
-  ).toEqual({ host: "10.0.0.5", port: 8080, extraHostnames: ["studio.home.arpa"] });
+  ).toMatchObject({ host: "10.0.0.5", port: 8080, extraHostnames: ["studio.home.arpa"] });
   expect(parseBrowserAccessConfig({ PI_APP_BROWSER_ACCESS: "[::1]:8080" })).toMatchObject({
     host: "::1",
     port: 8080,
   });
+});
+
+test("browser access serves HTTPS only with both a certificate and a key", () => {
+  expect(
+    parseBrowserAccessConfig({
+      PI_APP_BROWSER_ACCESS: "1",
+      PI_APP_BROWSER_ACCESS_TLS_CERT: "/certs/host.pem",
+      PI_APP_BROWSER_ACCESS_TLS_KEY: "/certs/host-key.pem",
+      PI_APP_BROWSER_ACCESS_PUSH_CONTACT: "mailto:someone@example.net",
+    }),
+  ).toMatchObject({
+    tls: { certFile: "/certs/host.pem", keyFile: "/certs/host-key.pem" },
+    pushContact: "mailto:someone@example.net",
+  });
+  expect(() =>
+    parseBrowserAccessConfig({
+      PI_APP_BROWSER_ACCESS: "1",
+      PI_APP_BROWSER_ACCESS_TLS_CERT: "/certs/host.pem",
+    }),
+  ).toThrow();
 });
 
 test("browser access rejects hostnames and invalid ports", () => {

@@ -1,5 +1,6 @@
+import { createDecipheriv, createECDH, createHmac, randomBytes } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
-import { request } from "node:http";
+import { createServer as createHttpServer, request, type Server } from "node:http";
 import { createServer } from "node:net";
 import { basename, join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
@@ -12,6 +13,7 @@ import {
   seedAgentDir,
   type DesktopHarness,
 } from "../helpers/electron-app";
+import { readOptionalLog } from "../helpers/notification-events";
 import { startScriptedOpenAiServer } from "../helpers/scripted-openai-server";
 
 const BROWSER_PROMPT = "Hello from a browser tab";
@@ -42,6 +44,80 @@ async function statusWithHost(port: number, host: string): Promise<number> {
     outgoing.once("error", reject);
     outgoing.end();
   });
+}
+
+interface ReceivedPush {
+  readonly authorization: string;
+  readonly payload: { title?: string; body?: string; session?: unknown };
+}
+
+/** A push service on loopback that decrypts what it receives, as the browser would. */
+async function startPushService(): Promise<{
+  readonly endpoint: string;
+  readonly subscription: { endpoint: string; keys: { p256dh: string; auth: string } };
+  readonly received: ReceivedPush[];
+  readonly close: () => Promise<void>;
+}> {
+  const receiver = createECDH("prime256v1");
+  receiver.generateKeys();
+  const auth = randomBytes(16);
+  const received: ReceivedPush[] = [];
+  const hmac = (key: Buffer, data: Buffer) => createHmac("sha256", key).update(data).digest();
+  const server: Server = createHttpServer((incoming, response) => {
+    const chunks: Buffer[] = [];
+    incoming.on("data", (chunk: Buffer) => chunks.push(chunk));
+    incoming.on("end", () => {
+      const body = Buffer.concat(chunks);
+      const salt = body.subarray(0, 16);
+      const idLength = body[20] ?? 0;
+      const senderPublic = body.subarray(21, 21 + idLength);
+      const ciphertext = body.subarray(21 + idLength);
+      const ikm = hmac(
+        hmac(auth, receiver.computeSecret(senderPublic)),
+        Buffer.concat([
+          Buffer.from("WebPush: info\0"),
+          receiver.getPublicKey(),
+          senderPublic,
+          Buffer.from([1]),
+        ]),
+      );
+      const prk = hmac(salt, ikm);
+      const decipher = createDecipheriv(
+        "aes-128-gcm",
+        hmac(prk, Buffer.from("Content-Encoding: aes128gcm\0\x01")).subarray(0, 16),
+        hmac(prk, Buffer.from("Content-Encoding: nonce\0\x01")).subarray(0, 12),
+      );
+      decipher.setAuthTag(ciphertext.subarray(ciphertext.length - 16));
+      const padded = Buffer.concat([
+        decipher.update(ciphertext.subarray(0, ciphertext.length - 16)),
+        decipher.final(),
+      ]);
+      received.push({
+        authorization: String(incoming.headers.authorization ?? ""),
+        payload: JSON.parse(
+          padded.subarray(0, padded.length - 1).toString("utf8"),
+        ) as ReceivedPush["payload"],
+      });
+      response.writeHead(201);
+      response.end();
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+  const endpoint = `http://127.0.0.1:${port}/push/device-1`;
+  return {
+    endpoint,
+    subscription: {
+      endpoint,
+      keys: {
+        p256dh: receiver.getPublicKey().toString("base64url"),
+        auth: auth.toString("base64url"),
+      },
+    },
+    received,
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  };
 }
 
 async function readPairingToken(userDataDir: string): Promise<string> {
@@ -122,8 +198,11 @@ test("a browser tab drives pi-gui through its own window view", async () => {
     }),
   );
   const port = await freePort();
+  const notificationLogPath = join(userDataDir, "notifications.log");
+  const pushService = await startPushService();
   const harness = await launchDesktop(userDataDir, {
     agentDir,
+    notificationLogPath,
     initialWorkspaces: [workspace],
     scrubProviderEnv: true,
     testMode: "background",
@@ -175,8 +254,96 @@ test("a browser tab drives pi-gui through its own window view", async () => {
       );
       expect(message).toContain("not available in the browser");
     });
+
+    // A second tab speaks the wire protocol directly: Electron has no push service, so it
+    // registers a subscription that points at the local push service.
+    await browser.evaluate(async () => {
+      const hex = () =>
+        Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) =>
+          byte.toString(16).padStart(2, "0"),
+        ).join("");
+      const socket = new WebSocket(
+        `ws://${location.host}/__pi-browser/socket?tab=${hex()}&instance=${hex()}`,
+      );
+      const waiting = new Map<number, (frame: { ok: boolean; v?: unknown; e?: string }) => void>();
+      let nextId = 1;
+      await new Promise<void>((resolve, reject) => {
+        socket.onerror = () => reject(new Error("The second tab could not connect."));
+        socket.onmessage = (message: MessageEvent<string>) => {
+          const frame = JSON.parse(message.data) as { t: string; id?: number; ok: boolean };
+          if (frame.t === "ready") resolve();
+          if (frame.t === "result" && frame.id !== undefined) waiting.get(frame.id)?.(frame);
+        };
+      });
+      const request = (t: "call" | "host", m: string, a: unknown[]) =>
+        new Promise<unknown>((resolve, reject) => {
+          const id = nextId++;
+          waiting.set(id, (frame) => (frame.ok ? resolve(frame.v) : reject(new Error(frame.e))));
+          socket.send(JSON.stringify({ t, id, m, a }));
+        });
+      Object.assign(globalThis, {
+        secondTab: {
+          request,
+          setVisible: (visible: boolean) =>
+            socket.send(JSON.stringify({ t: "visibility", visible })),
+        },
+      });
+    });
+    type SecondTab = {
+      request: (t: "call" | "host", m: string, a: unknown[]) => Promise<unknown>;
+      setVisible: (visible: boolean) => void;
+    };
+    const secondTabRequest = (t: "call" | "host", m: string, a: unknown[]) =>
+      browser.evaluate(
+        ([type, member, args]) =>
+          (globalThis as unknown as { secondTab: SecondTab }).secondTab.request(type, member, args),
+        [t, m, a] as const,
+      );
+    const setSecondTabVisible = (visible: boolean) =>
+      browser.evaluate((value) => {
+        (globalThis as unknown as { secondTab: SecondTab }).secondTab.setVisible(value);
+      }, visible);
+    const desktopRef = {
+      workspaceId: desktopBefore.selectedWorkspaceId,
+      sessionId: desktopBefore.selectedSessionId,
+    };
+    const notificationCount = async () =>
+      (await readOptionalLog(notificationLogPath)).split("\n").filter(Boolean).length;
+    const promptOnDesktop = async (text: string) => {
+      await desktop.getByTestId("composer").fill(text);
+      await desktop.getByTestId("composer").press("Enter");
+    };
+
+    await test.step("a subscribed browser is pushed when a thread finishes", async () => {
+      expect(await secondTabRequest("host", "pushSubscribe", [pushService.subscription])).toBe(
+        true,
+      );
+      await promptOnDesktop("First desktop prompt");
+      await expect.poll(() => pushService.received.length).toBe(1);
+      const [push] = pushService.received;
+      expect(push?.authorization).toMatch(/^vapid t=[\w-]+\.[\w-]+\.[\w-]+, k=[\w-]+$/);
+      expect(push?.payload).toMatchObject({
+        title: "Desktop thread",
+        body: "Agent finished responding",
+        session: desktopRef,
+      });
+    });
+
+    await test.step("no push while an on-screen browser tab shows that thread", async () => {
+      await secondTabRequest("call", "selectSession", [desktopRef]);
+      await setSecondTabVisible(true);
+      const before = await notificationCount();
+      await promptOnDesktop("Second desktop prompt");
+      await expect.poll(notificationCount).toBe(before + 1);
+      await setSecondTabVisible(false);
+      await promptOnDesktop("Third desktop prompt");
+      // Pushes go out in order, so the third arriving second proves the second was skipped.
+      await expect.poll(() => pushService.received.length).toBe(2);
+      await expect.poll(notificationCount).toBe(before + 2);
+    });
   } finally {
     await harness.close();
     await server.close();
+    await pushService.close();
   }
 });

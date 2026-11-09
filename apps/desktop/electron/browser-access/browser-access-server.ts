@@ -1,16 +1,26 @@
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile, chmod, rename } from "node:fs/promises";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
+import https from "node:https";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
 import { BROWSER_ACCESS_PREFIX } from "../../contracts/browser-access";
-import { bridgeScript, browserClientScript } from "./browser-scripts";
+import type { SessionRef } from "@pi-gui/session-driver";
+import {
+  bridgeScript,
+  browserClientScript,
+  browserHeadTags,
+  serviceWorkerScript,
+  webAppManifest,
+} from "./browser-scripts";
+import { PushRegistry } from "./push-registry";
+import { isPushSubscription, sendPush } from "./web-push";
 import {
   isAllowedHost,
-  isLocalPeer,
+  isLoopbackAddress,
   isSameOrigin,
   localHostnames,
   readCookie,
@@ -22,6 +32,8 @@ export interface BrowserBridgeWindow {
   isDestroyed(): boolean;
   destroy(): void;
   onClosed(listener: () => void): void;
+  /** Whether this window's view has the thread open. */
+  showsSession(sessionRef: SessionRef): boolean;
 }
 
 export type BrowserAccessRendererSource =
@@ -34,6 +46,14 @@ export interface BrowserAccessServerOptions {
   readonly port: number;
   /** Where the pairing token is kept (readable by this user only). */
   readonly tokenFile: string;
+  /** Where the push key pair and browser subscriptions are kept (readable by this user only). */
+  readonly pushFile: string;
+  /** PEM certificate and key. With both, browsers connect over HTTPS. */
+  readonly tls?: { readonly cert: Buffer; readonly key: Buffer };
+  /** Served as the web app icon. */
+  readonly iconFile?: string;
+  /** Contact URL or `mailto:` address sent to push services (VAPID subject). */
+  readonly pushContact: string;
   readonly renderer: BrowserAccessRendererSource;
   /** Extra names (for example a local DNS name) that browsers may use to reach this host. */
   readonly extraHostnames?: readonly string[];
@@ -51,6 +71,7 @@ interface TabRecord {
   client?: WebSocket;
   bridge?: WebSocket;
   resumed: boolean;
+  visible: boolean;
   graceTimer?: ReturnType<typeof setTimeout>;
 }
 
@@ -104,7 +125,7 @@ async function loadOrCreateToken(tokenFile: string): Promise<string> {
 }
 
 function injectClientScript(html: string): string {
-  const tag = `<script src="${BROWSER_ACCESS_PREFIX}/client.js"></script>`;
+  const tag = browserHeadTags;
   const head = /<head[^>]*>/i.exec(html);
   if (!head) return tag + html;
   const end = head.index + head[0].length;
@@ -139,12 +160,10 @@ function rejectUpgrade(socket: Duplex, status: number, reason: string): void {
  * must name this machine in its Host header, and sockets must come from this origin.
  */
 export class BrowserAccessServer {
-  private readonly server = http.createServer((request, response) => {
-    void this.handleRequest(request, response).catch((error: unknown) => {
-      console.error("[browser-access] request failed", error);
-      if (!response.headersSent) sendPlain(response, 500, "Internal error");
-      else response.destroy();
-    });
+  private readonly server: http.Server;
+  /** Bridge windows reach the host here: loopback only, on its own port. */
+  private readonly bridgeServer = http.createServer((request, response) => {
+    this.handleBridgeRequest(request, response);
   });
   private readonly clientSockets = new WebSocketServer({
     noServer: true,
@@ -157,18 +176,45 @@ export class BrowserAccessServer {
   });
   private readonly tabs = new Map<string, TabRecord>();
   private readonly allowedHosts: ReadonlySet<string>;
+  private readonly push: PushRegistry;
+  private pushQueue: Promise<void> = Promise.resolve();
   private token = "";
   private boundPort = 0;
+  private bridgePort = 0;
 
   constructor(private readonly options: BrowserAccessServerOptions) {
     this.allowedHosts = localHostnames(options.extraHostnames);
+    this.push = new PushRegistry(options.pushFile);
+    const handle = (request: IncomingMessage, response: ServerResponse) => {
+      void this.handleRequest(request, response).catch((error: unknown) => {
+        console.error("[browser-access] request failed", error);
+        if (!response.headersSent) sendPlain(response, 500, "Internal error");
+        else response.destroy();
+      });
+    };
+    this.server = options.tls
+      ? https.createServer({ cert: options.tls.cert, key: options.tls.key }, handle)
+      : http.createServer(handle);
     this.server.on("upgrade", (request, socket, head) => {
       this.handleUpgrade(request, socket, head);
+    });
+    this.bridgeServer.on("upgrade", (request, socket, head) => {
+      this.handleBridgeUpgrade(request, socket, head);
     });
   }
 
   async start(): Promise<void> {
     this.token = await loadOrCreateToken(this.options.tokenFile);
+    await this.push.load();
+    await new Promise<void>((resolve, reject) => {
+      this.bridgeServer.once("error", reject);
+      this.bridgeServer.listen(0, "127.0.0.1", () => {
+        this.bridgeServer.off("error", reject);
+        resolve();
+      });
+    });
+    const bridgeAddress = this.bridgeServer.address();
+    this.bridgePort = typeof bridgeAddress === "object" && bridgeAddress ? bridgeAddress.port : 0;
     await new Promise<void>((resolve, reject) => {
       this.server.once("error", reject);
       this.server.listen(this.options.port, this.options.host, () => {
@@ -184,7 +230,10 @@ export class BrowserAccessServer {
     for (const tab of [...this.tabs.values()]) this.closeTab(tab);
     this.clientSockets.close();
     this.bridgeSockets.close();
-    await new Promise<void>((resolve) => this.server.close(() => resolve()));
+    await Promise.all([
+      new Promise<void>((resolve) => this.server.close(() => resolve())),
+      new Promise<void>((resolve) => this.bridgeServer.close(() => resolve())),
+    ]);
   }
 
   get port(): number {
@@ -200,10 +249,54 @@ export class BrowserAccessServer {
           .map((info) => info.address)
       : [this.options.host];
     if (hosts.length === 0) hosts.push("127.0.0.1");
-    return hosts.map(
-      (host) =>
-        `http://${host.includes(":") ? `[${host}]` : host}:${this.boundPort}${BROWSER_ACCESS_PREFIX}/pair?token=${this.token}`,
+    return hosts.map((host) => this.pairingUrl(host.includes(":") ? `[${host}]` : host));
+  }
+
+  private get scheme(): "http" | "https" {
+    return this.options.tls ? "https" : "http";
+  }
+
+  private pairingUrl(host: string, port: number = this.boundPort): string {
+    return `${this.scheme}://${host}:${port}${BROWSER_ACCESS_PREFIX}/pair?token=${this.token}`;
+  }
+
+  /**
+   * Sends a notification to every subscribed browser, unless an on-screen browser tab
+   * already shows the thread. Pushes go out one at a time, in order.
+   */
+  notify(sessionRef: SessionRef, title: string, body: string): void {
+    const shownInBrowser = [...this.tabs.values()].some(
+      (tab) =>
+        tab.visible &&
+        tab.client &&
+        !tab.window.isDestroyed() &&
+        tab.window.showsSession(sessionRef),
     );
+    if (shownInBrowser) return;
+    const subscriptions = this.push.subscriptions();
+    if (subscriptions.length === 0) return;
+    const payload = {
+      title,
+      body,
+      tag: `${sessionRef.workspaceId}:${sessionRef.sessionId}`,
+      session: sessionRef,
+    };
+    const deliver = async () => {
+      for (const subscription of subscriptions) {
+        try {
+          const result = await sendPush({
+            subscription,
+            payload,
+            vapid: this.push.vapid,
+            subject: this.options.pushContact,
+          });
+          if (result === "expired") await this.push.remove(subscription.endpoint);
+        } catch (error) {
+          console.warn("[browser-access] push delivery failed", error);
+        }
+      }
+    };
+    this.pushQueue = this.pushQueue.then(deliver, deliver);
   }
 
   private isWildcardHost(): boolean {
@@ -212,9 +305,7 @@ export class BrowserAccessServer {
 
   /** The address a bridge window on this host uses to reach the server. */
   private bridgeOrigin(): string {
-    if (this.isWildcardHost()) return `127.0.0.1:${this.boundPort}`;
-    const host = this.options.host.includes(":") ? `[${this.options.host}]` : this.options.host;
-    return `${host}:${this.boundPort}`;
+    return `127.0.0.1:${this.bridgePort}`;
   }
 
   private isPaired(request: IncomingMessage): boolean {
@@ -239,7 +330,7 @@ export class BrowserAccessServer {
       }
       response.writeHead(302, {
         ...BASE_HEADERS,
-        "Set-Cookie": `${COOKIE_NAME}=${this.token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=31536000`,
+        "Set-Cookie": `${COOKIE_NAME}=${this.token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=31536000${this.options.tls ? "; Secure" : ""}`,
         "Cache-Control": "no-store",
         Location: "/",
       });
@@ -247,8 +338,35 @@ export class BrowserAccessServer {
       return;
     }
 
-    if (url.pathname === `${BROWSER_ACCESS_PREFIX}/bridge`) {
-      this.serveBridgePage(request, response, url);
+    // Fetched by the browser without (or before) the pairing cookie; none holds a secret
+    // unless the request is paired.
+    if (url.pathname === `${BROWSER_ACCESS_PREFIX}/manifest.webmanifest`) {
+      const startUrl = this.isPaired(request)
+        ? `${BROWSER_ACCESS_PREFIX}/pair?token=${this.token}`
+        : "/";
+      this.sendBody(
+        request,
+        response,
+        200,
+        "application/manifest+json",
+        webAppManifest({ startUrl }),
+      );
+      return;
+    }
+    if (url.pathname === `${BROWSER_ACCESS_PREFIX}/sw.js`) {
+      response.setHeader("Service-Worker-Allowed", "/");
+      this.sendBody(request, response, 200, "text/javascript; charset=utf-8", serviceWorkerScript);
+      return;
+    }
+    if (url.pathname === `${BROWSER_ACCESS_PREFIX}/icon.png` && this.options.iconFile) {
+      let icon: Buffer;
+      try {
+        icon = await readFile(this.options.iconFile);
+      } catch {
+        sendPlain(response, 404, "Not found");
+        return;
+      }
+      this.sendBody(request, response, 200, "image/png", icon, "max-age=86400");
       return;
     }
 
@@ -262,12 +380,13 @@ export class BrowserAccessServer {
     }
 
     if (url.pathname === `${BROWSER_ACCESS_PREFIX}/client.js`) {
-      response.writeHead(200, {
-        ...BASE_HEADERS,
-        "Content-Type": "text/javascript; charset=utf-8",
-        "Cache-Control": "no-store",
-      });
-      response.end(request.method === "HEAD" ? undefined : browserClientScript);
+      this.sendBody(
+        request,
+        response,
+        200,
+        "text/javascript; charset=utf-8",
+        browserClientScript({ pushPublicKey: this.push.vapid.publicKey }),
+      );
       return;
     }
 
@@ -278,11 +397,39 @@ export class BrowserAccessServer {
     await this.serveRendererFile(request, response, this.options.renderer.root, url.pathname);
   }
 
-  private serveBridgePage(request: IncomingMessage, response: ServerResponse, url: URL): void {
+  private sendBody(
+    request: IncomingMessage,
+    response: ServerResponse,
+    status: number,
+    contentType: string,
+    body: string | Buffer,
+    cacheControl = "no-store",
+  ): void {
+    const payload = typeof body === "string" ? Buffer.from(body) : body;
+    response.writeHead(status, {
+      ...BASE_HEADERS,
+      "Content-Type": contentType,
+      "Content-Length": payload.length,
+      "Cache-Control": cacheControl,
+    });
+    response.end(request.method === "HEAD" ? undefined : payload);
+  }
+
+  private isBridgeRequest(request: IncomingMessage): boolean {
+    return (
+      isLoopbackAddress(request.socket.remoteAddress) &&
+      request.headers.host === this.bridgeOrigin()
+    );
+  }
+
+  private handleBridgeRequest(request: IncomingMessage, response: ServerResponse): void {
+    const url = new URL(request.url ?? "/", "http://host.invalid");
     const tab = this.tabs.get(url.searchParams.get("tab") ?? "");
     if (
+      request.method !== "GET" ||
+      url.pathname !== `${BROWSER_ACCESS_PREFIX}/bridge` ||
       !tab ||
-      !isLocalPeer(request.socket.remoteAddress) ||
+      !this.isBridgeRequest(request) ||
       !secretsEqual(url.searchParams.get("key") ?? undefined, tab.secret)
     ) {
       sendPlain(response, 403, "Forbidden");
@@ -387,10 +534,6 @@ export class BrowserAccessServer {
       return;
     }
     const url = new URL(request.url ?? "/", "http://host.invalid");
-    if (url.pathname === `${BROWSER_ACCESS_PREFIX}/bridge-socket`) {
-      this.upgradeBridge(request, socket, head, url);
-      return;
-    }
     if (!isSameOrigin(request.headers.origin, request.headers.host)) {
       rejectUpgrade(socket, 403, "Forbidden");
       return;
@@ -451,21 +594,37 @@ export class BrowserAccessServer {
     const record = tab;
 
     client.on("message", (data) => {
-      // Only calls go to the bridge; the bridge validates the member and its arguments.
+      // Calls go to the bridge, which validates the member and its arguments. The host
+      // answers host calls and visibility reports itself.
       const text = rawText(data);
-      let frame: { t?: unknown };
+      let frame: { t?: unknown; id?: unknown; m?: unknown; a?: unknown; visible?: unknown };
       try {
-        frame = JSON.parse(text) as { t?: unknown };
+        frame = JSON.parse(text) as typeof frame;
       } catch {
         return;
       }
       if (frame.t === "call" && record.bridge?.readyState === WebSocket.OPEN) {
         record.bridge.send(text);
+      } else if (frame.t === "visibility" && typeof frame.visible === "boolean") {
+        record.visible = frame.visible;
+      } else if (frame.t === "host" && typeof frame.id === "number") {
+        const id = frame.id;
+        void this.handleHostCall(frame.m, frame.a).then(
+          (value) => this.sendToClient(client, { t: "result", id, ok: true, v: value }),
+          (error: unknown) =>
+            this.sendToClient(client, {
+              t: "result",
+              id,
+              ok: false,
+              e: error instanceof Error ? error.message : String(error),
+            }),
+        );
       }
     });
     client.on("close", () => {
       if (record.client !== client) return;
       record.client = undefined;
+      record.visible = false;
       record.graceTimer = setTimeout(
         () => this.closeTab(record),
         this.options.reconnectGraceMs ?? 60_000,
@@ -473,6 +632,25 @@ export class BrowserAccessServer {
     });
     client.on("error", () => client.terminate());
     if (record.bridge?.readyState === WebSocket.OPEN) this.announceReady(record);
+  }
+
+  private sendToClient(client: WebSocket, frame: unknown): void {
+    if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify(frame));
+  }
+
+  private async handleHostCall(member: unknown, args: unknown): Promise<unknown> {
+    const first = Array.isArray(args) ? (args[0] as unknown) : undefined;
+    if (member === "pushSubscribe") {
+      if (!isPushSubscription(first)) throw new Error("That push subscription is not valid.");
+      await this.push.add(first);
+      return true;
+    }
+    if (member === "pushUnsubscribe") {
+      if (typeof first !== "string") throw new Error("An endpoint is required.");
+      await this.push.remove(first);
+      return true;
+    }
+    throw new Error("Unknown request.");
   }
 
   private announceReady(tab: TabRecord): void {
@@ -486,7 +664,7 @@ export class BrowserAccessServer {
     const url = `http://${this.bridgeOrigin()}${BROWSER_ACCESS_PREFIX}/bridge?tab=${tabId}&key=${secret}`;
     // The window loads the bridge page asynchronously, after the record below is registered.
     const window = this.options.openBridgeWindow(url);
-    const record: TabRecord = { id: tabId, secret, resumed: false, window };
+    const record: TabRecord = { id: tabId, secret, resumed: false, visible: false, window };
     this.tabs.set(tabId, record);
     window.onClosed(() => {
       if (this.tabs.get(tabId) === record) this.closeTab(record);
@@ -502,12 +680,14 @@ export class BrowserAccessServer {
     if (!tab.window.isDestroyed()) tab.window.destroy();
   }
 
-  private upgradeBridge(request: IncomingMessage, socket: Duplex, head: Buffer, url: URL): void {
+  private handleBridgeUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): void {
+    const url = new URL(request.url ?? "/", "http://host.invalid");
     const tab = this.tabs.get(url.searchParams.get("tab") ?? "");
     if (
+      url.pathname !== `${BROWSER_ACCESS_PREFIX}/bridge-socket` ||
       !tab ||
       tab.bridge ||
-      !isLocalPeer(request.socket.remoteAddress) ||
+      !this.isBridgeRequest(request) ||
       !secretsEqual(url.searchParams.get("key") ?? undefined, tab.secret)
     ) {
       rejectUpgrade(socket, 403, "Forbidden");

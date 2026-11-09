@@ -717,17 +717,33 @@ function createBrowserBridgeWindow(url: string): BrowserBridgeWindow {
     isDestroyed: () => window.isDestroyed(),
     destroy: () => window.destroy(),
     onClosed: (listener) => window.once("closed", listener),
+    showsSession: (sessionRef) => {
+      if (window.isDestroyed()) return false;
+      const view = windowOwner.viewForWindow(window);
+      return (
+        view.activeView === "threads" &&
+        view.selectedWorkspaceId === sessionRef.workspaceId &&
+        view.selectedSessionId === sessionRef.sessionId
+      );
+    },
   };
 }
 
 async function startBrowserAccess(): Promise<void> {
   const config = parseBrowserAccessConfig(process.env);
   if (!config) return;
+  const tls = config.tls
+    ? { cert: await readFile(config.tls.certFile), key: await readFile(config.tls.keyFile) }
+    : undefined;
   const server = new BrowserAccessServer({
     host: config.host,
     port: config.port,
     extraHostnames: config.extraHostnames,
     tokenFile: path.join(app.getPath("userData"), "browser-access.json"),
+    pushFile: path.join(app.getPath("userData"), "browser-push.json"),
+    pushContact: config.pushContact,
+    iconFile: appIconPath,
+    ...(tls ? { tls } : {}),
     renderer:
       isDev && process.env.ELECTRON_RENDERER_URL
         ? { kind: "dev-server", url: process.env.ELECTRON_RENDERER_URL }
@@ -1211,6 +1227,7 @@ app
           forceActiveWindow: true,
         });
       },
+      (sessionRef, title, body) => browserAccessServer?.notify(sessionRef, title, body),
     );
     stopNotifications = notificationManager.start();
     if (!isDev) {

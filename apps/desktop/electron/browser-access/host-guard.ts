@@ -61,16 +61,6 @@ export function isLoopbackAddress(address: string | undefined): boolean {
   return normalized === "::1" || (isIP(normalized) === 4 && normalized.startsWith("127."));
 }
 
-/** True when the peer address belongs to this machine (loopback or one of its interfaces). */
-export function isLocalPeer(address: string | undefined): boolean {
-  if (!address) return false;
-  if (isLoopbackAddress(address)) return true;
-  const normalized = address.replace(/^::ffff:/i, "").toLowerCase();
-  return Object.values(os.networkInterfaces()).some((infos) =>
-    (infos ?? []).some((info) => info.address.toLowerCase() === normalized),
-  );
-}
-
 export function secretsEqual(a: string | undefined, b: string): boolean {
   if (typeof a !== "string") return false;
   const left = Buffer.from(a);

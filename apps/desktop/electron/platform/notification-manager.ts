@@ -29,6 +29,8 @@ export class NotificationManager {
     private readonly getWindow: () => BrowserWindow | null,
     private readonly notificationPermissionService: NotificationPermissionService,
     private readonly selectSessionInWindow?: (sessionRef: SessionRef) => Promise<void>,
+    /** Also told about every notification shown here, for example to reach other devices. */
+    private readonly onNotify?: (sessionRef: SessionRef, title: string, body: string) => void,
   ) {}
 
   start(): () => void {
@@ -318,6 +320,7 @@ export class NotificationManager {
   ): Promise<void> {
     this.dismissForSession(sessionRef);
     await this.logNotification(sessionRef, title, body);
+    this.onNotify?.(sessionRef, title, body);
     if (process.env.PI_APP_TEST_MODE) {
       return;
     }

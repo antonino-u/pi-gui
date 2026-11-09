@@ -177,6 +177,10 @@ export const BROWSER_ACCESS_PREFIX = "/__pi-browser";
  */
 export type BrowserAccessFrame =
   | { readonly t: "call"; readonly id: number; readonly m: string; readonly a: readonly unknown[] }
+  /** Browser to host, answered by the host itself (for example a push subscription). */
+  | { readonly t: "host"; readonly id: number; readonly m: string; readonly a: readonly unknown[] }
+  /** Browser to host: whether the tab is on screen, so pushes skip a thread it shows. */
+  | { readonly t: "visibility"; readonly visible: boolean }
   | {
       readonly t: "result";
       readonly id: number;
