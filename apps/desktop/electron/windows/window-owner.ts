@@ -45,6 +45,15 @@ export interface WindowActionOptions {
   readonly forceActiveWindow?: boolean;
 }
 
+export interface AddWindowOptions {
+  /**
+   * A hidden window that renders for a remote client, such as a browser tab. It gets its
+   * own view and state pushes like any window, but never becomes the active or foreground
+   * window, so menus, shortcuts, dialogs and notifications keep targeting desktop windows.
+   */
+  readonly remote?: boolean;
+}
+
 function viewFromState(state: DesktopAppState): WindowViewState {
   return {
     selectedWorkspaceId: state.selectedWorkspaceId,
@@ -78,6 +87,7 @@ export class WindowOwner {
   private readonly lastPublishedCatalog = new Map<number, DesktopAppState["runtimeByWorkspace"]>();
   private readonly windows = new Set<BrowserWindow>();
   private readonly windowIds = new WeakMap<BrowserWindow, number>();
+  private readonly remoteWebContentsIds = new Set<number>();
   private readonly views = new Map<number, WindowViewState>();
   private readonly stopPublishingState = new Map<number, () => void>();
   private readonly stopPublishingTranscript = new Map<number, () => void>();
@@ -94,14 +104,32 @@ export class WindowOwner {
     private readonly options: WindowOwnerOptions = {},
   ) {}
 
-  add(window: BrowserWindow, sourceView?: DesktopAppViewState): void {
+  add(
+    window: BrowserWindow,
+    sourceView?: DesktopAppViewState,
+    options: AddWindowOptions = {},
+  ): void {
     const webContentsId = window.webContents.id;
     this.windows.add(window);
     this.windowIds.set(window, webContentsId);
     this.views.set(webContentsId, this.resolveView(sourceView));
-    this.setActiveWindow(window);
+    if (options.remote) {
+      this.remoteWebContentsIds.add(webContentsId);
+    } else {
+      this.setActiveWindow(window);
+      this.attachActivationTracking(window);
+    }
     this.attachStatePublisher(window);
-    this.attachActivationTracking(window);
+  }
+
+  isRemote(window: BrowserWindow): boolean {
+    const webContentsId = this.windowIds.get(window);
+    return webContentsId !== undefined && this.remoteWebContentsIds.has(webContentsId);
+  }
+
+  /** Desktop windows only; remote client windows are excluded. */
+  appWindowCount(): number {
+    return [...this.windows].filter((window) => !this.isRemote(window)).length;
   }
 
   remove(window: BrowserWindow): void {
@@ -119,12 +147,16 @@ export class WindowOwner {
     this.stopTrackingActivation.delete(webContentsId);
     this.windows.delete(window);
     this.windowIds.delete(window);
+    this.remoteWebContentsIds.delete(webContentsId);
     this.views.delete(webContentsId);
     this.lastPublishedTranscript.delete(webContentsId);
     this.lastPublishedCatalog.delete(webContentsId);
 
     if (this.activeWindow === window) {
-      this.activeWindow = [...this.windows].find((candidate) => !candidate.isDestroyed()) ?? null;
+      this.activeWindow =
+        [...this.windows].find(
+          (candidate) => !candidate.isDestroyed() && !this.isRemote(candidate),
+        ) ?? null;
       if (this.activeWindow) {
         this.setActiveWindow(this.activeWindow);
         this.applyViewToStateOwner(this.activeWindow.webContents.id);
@@ -152,6 +184,7 @@ export class WindowOwner {
     if (
       focusedWindow &&
       this.views.has(focusedWindow.webContents.id) &&
+      !this.isRemote(focusedWindow) &&
       canPublishToWindow(focusedWindow)
     ) {
       return focusedWindow;
@@ -159,7 +192,11 @@ export class WindowOwner {
     if (this.activeWindow && canPublishToWindow(this.activeWindow)) {
       return this.activeWindow;
     }
-    return [...this.windows].find(canPublishToWindow) ?? null;
+    return (
+      [...this.windows].find(
+        (candidate) => canPublishToWindow(candidate) && !this.isRemote(candidate),
+      ) ?? null
+    );
   }
 
   foregroundView(): DesktopAppViewState | undefined {
@@ -207,7 +244,11 @@ export class WindowOwner {
 
   isSessionVisibleInAnotherWindow(sessionRef: SessionRef): boolean {
     for (const window of this.windows) {
-      if (!canPublishToWindow(window) || window.isMinimized() || !window.isVisible()) {
+      if (!canPublishToWindow(window)) {
+        continue;
+      }
+      // A remote window is hidden on this machine but visible to its client.
+      if (!this.isRemote(window) && (window.isMinimized() || !window.isVisible())) {
         continue;
       }
       const webContentsId = window.webContents.id;
@@ -431,7 +472,7 @@ export class WindowOwner {
   }
 
   private setActiveWindow(window: BrowserWindow): void {
-    if (window.isDestroyed()) {
+    if (window.isDestroyed() || this.isRemote(window)) {
       return;
     }
     this.activeWindow = window;
