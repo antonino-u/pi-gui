@@ -1,5 +1,6 @@
 import { CheckIcon, ChevronDownIcon } from "../../ui/icons";
 import { EditorIcon, hasEditorIcon } from "../../ui/editor-icons";
+import { hasHostScreen } from "../../lib/surface";
 import type { OpenInEditorState } from "./hooks/use-open-in-editor";
 
 interface OpenInEditorButtonProps {
@@ -8,6 +9,8 @@ interface OpenInEditorButtonProps {
 }
 
 export function OpenInEditorButton({ state, onOpenFolder }: OpenInEditorButtonProps) {
+  // Editors and the file manager open on the host's screen, which a paired browser cannot see.
+  if (!hasHostScreen()) return null;
   const displayLabel = state.loading ? "…" : (state.targetLabel ?? "Folder");
   const label = state.loading
     ? "Looking for editors…"

@@ -420,7 +420,8 @@ export const browserHeadTags = [
   `<meta name="apple-mobile-web-app-capable" content="yes">`,
   `<meta name="mobile-web-app-capable" content="yes">`,
   `<meta name="apple-mobile-web-app-title" content="pi">`,
-  `<meta name="apple-mobile-web-app-status-bar-style" content="black">`,
+  // The app draws under the status bar and pads its own background behind it (browser.css).
+  `<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">`,
 ].join("");
 
 /**

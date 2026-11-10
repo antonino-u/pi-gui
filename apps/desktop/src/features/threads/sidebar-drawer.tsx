@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 
 /** Must match the `max-width` breakpoint in `styles/sidebar.css` that turns the sidebar into a drawer. */
-const NARROW_SIDEBAR_QUERY = "(max-width: 760px)";
+export const NARROW_SIDEBAR_QUERY = "(max-width: 760px)";
 
-function useMediaQuery(query: string): boolean {
+export function useMediaQuery(query: string): boolean {
   const [matches, setMatches] = useState(() => window.matchMedia(query).matches);
   useEffect(() => {
     const media = window.matchMedia(query);

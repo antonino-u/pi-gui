@@ -264,6 +264,49 @@ test("a browser tab drives pi-gui through its own window view", async () => {
       await expect(browser.getByTestId("open-in-editor")).toHaveCount(0);
     });
 
+    await test.step("on a phone-width screen, a swipe from the left edge opens the menu", async () => {
+      await harness.electronApp.evaluate(({ BrowserWindow }, url) => {
+        BrowserWindow.getAllWindows()
+          .find((window) => window.webContents.getURL().startsWith(url))
+          ?.setContentSize(390, 844);
+      }, origin);
+      await browser.waitForFunction(() => window.innerWidth <= 400);
+      await browser.evaluate(() => globalThis.window.piApp.setSidebarCollapsed(true));
+      await expect(browser.locator(".shell > .sidebar")).toHaveCount(0);
+      const swipe = (points: readonly number[]) =>
+        browser.evaluate(async (xs) => {
+          const main = document.querySelector("main");
+          if (!main) throw new Error("No main surface");
+          const send = (type: string, x: number) => {
+            const touch = new Touch({ identifier: 1, target: main, clientX: x, clientY: 400 });
+            main.dispatchEvent(
+              new TouchEvent(type, {
+                bubbles: true,
+                cancelable: true,
+                touches: type === "touchend" ? [] : [touch],
+                changedTouches: [touch],
+              }),
+            );
+          };
+          send("touchstart", xs[0] ?? 0);
+          for (const x of xs.slice(1)) {
+            send("touchmove", x);
+            await new Promise((resolve) => setTimeout(resolve, 40));
+          }
+          send("touchend", xs[xs.length - 1] ?? 0);
+        }, points);
+      // Starting mid-screen is a scroll, not a menu swipe.
+      await swipe([150, 180, 240, 300]);
+      await expect(browser.locator(".shell > .sidebar")).toHaveCount(0);
+      await swipe([6, 40, 120, 220, 300]);
+      await expect(browser.locator(".shell > .sidebar")).toBeVisible();
+      await expect.poll(async () => (await getDesktopState(browser)).sidebarCollapsed).toBe(false);
+      // The desktop window keeps its own sidebar.
+      expect((await getDesktopState(desktop)).sidebarCollapsed).toBe(
+        desktopBefore.sidebarCollapsed,
+      );
+    });
+
     await test.step("Open folder in the browser asks for a path on the host", async () => {
       const result = await browser.evaluate(async (folder) => {
         const answers = ["~/no-such-folder-for-this-test", folder];

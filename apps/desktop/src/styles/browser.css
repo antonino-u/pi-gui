@@ -17,16 +17,49 @@
   overscroll-behavior: none;
 }
 
+/* A Home Screen app draws under the status bar (black-translucent). The app's own
+   background fills that strip and the rounded corners, so nothing of the app sits where
+   iOS blurs and dims the top edge. Fixed overlays start below it too. */
+:root[data-pi-surface="browser"] {
+  --window-titlebar-height: env(safe-area-inset-top, 0px);
+  background: var(--main);
+}
+
 :root[data-pi-surface="browser"] body {
   overflow: hidden;
   overscroll-behavior: none;
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) 0
+    env(safe-area-inset-left, 0px);
+  background: var(--main);
 }
 
 /* The client sets --pi-viewport-height from the visual viewport, so the composer stays
    above the on-screen keyboard. `100dvh` covers the first paint. */
-:root[data-pi-surface="browser"] body,
-:root[data-pi-surface="browser"] #root {
+:root[data-pi-surface="browser"] body {
   height: var(--pi-viewport-height, 100dvh);
+}
+
+:root[data-pi-surface="browser"] #root {
+  height: 100%;
+}
+
+/* Long-pressing the app's chrome selects it or opens the link preview, which no app does.
+   Messages and code stay selectable. */
+:root[data-pi-surface="browser"] .sidebar,
+:root[data-pi-surface="browser"] .topbar,
+:root[data-pi-surface="browser"] .composer__footer,
+:root[data-pi-surface="browser"] .secondary-surface__sidebar,
+:root[data-pi-surface="browser"] button {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* iOS stops typing in fields that inherit user-select: none. */
+:root[data-pi-surface="browser"] input,
+:root[data-pi-surface="browser"] textarea {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 /* --------------------------------------------------------------------------
@@ -74,6 +107,25 @@
   /* The drawer takes most of the screen, so thread titles stay readable. */
   :root[data-pi-surface="browser"] .shell:not(.shell--sidebar-collapsed) > .sidebar {
     width: min(86vw, 360px);
+  }
+
+  /* While a swipe moves the drawer (features/threads/sidebar-swipe.ts) it follows the
+     finger, then settles with a short ease. */
+  :root[data-pi-surface="browser"][data-pi-drawer] .shell > .sidebar {
+    transform: translateX(var(--pi-drawer-offset, 0px));
+    will-change: transform;
+  }
+
+  :root[data-pi-surface="browser"][data-pi-drawer] .sidebar-drawer-backdrop {
+    opacity: var(--pi-drawer-progress, 1);
+  }
+
+  :root[data-pi-surface="browser"][data-pi-drawer="settle"] .shell > .sidebar {
+    transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  :root[data-pi-surface="browser"][data-pi-drawer="settle"] .sidebar-drawer-backdrop {
+    transition: opacity 220ms ease-out;
   }
 
   :root[data-pi-surface="browser"] .topbar {

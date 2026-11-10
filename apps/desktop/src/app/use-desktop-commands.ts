@@ -193,6 +193,10 @@ export function useDesktopCommands(input: DesktopCommandsInput) {
     () => setPrimarySidebarCollapsed(true),
     [setPrimarySidebarCollapsed],
   );
+  const expandPrimarySidebar = useCallback(
+    () => setPrimarySidebarCollapsed(false),
+    [setPrimarySidebarCollapsed],
+  );
   const togglePalette = (mode: "commands" | "files", source: ChordSource) => {
     if (threadSidebarModel && paletteGates.current[mode](source, performance.now())) {
       setPaletteMode((current) => (current === mode ? null : mode));
@@ -488,5 +492,6 @@ export function useDesktopCommands(input: DesktopCommandsInput) {
     toggleSidePanel,
     togglePrimarySidebar,
     collapsePrimarySidebar,
+    expandPrimarySidebar,
   };
 }
