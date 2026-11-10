@@ -216,9 +216,88 @@ export function browserClientScript(options: { readonly pushPublicKey: string })
   const platform = /Mac|iPhone|iPad|iPod/.test(ua) ? "darwin" : /Windows/.test(ua) ? "win32" : "linux";
   const unavailable = (member) => () => Promise.reject(new Error(member + " is not available in the browser."));
 
+  document.documentElement.dataset.piSurface = "browser";
+
+  // iOS Safari does not resize the page for the on-screen keyboard; it shrinks the visual
+  // viewport and scrolls the page instead, which pushes the composer out of view. The app
+  // sizes itself to the visual viewport and keeps the page unscrolled.
+  const viewport = window.visualViewport;
+  const fitViewport = () => {
+    const height = viewport ? viewport.height : window.innerHeight;
+    document.documentElement.style.setProperty("--pi-viewport-height", Math.round(height) + "px");
+    if (window.scrollY !== 0 || window.scrollX !== 0) window.scrollTo(0, 0);
+  };
+  fitViewport();
+  (viewport ?? window).addEventListener("resize", fitViewport);
+  viewport?.addEventListener("scroll", fitViewport);
+
+  // The host has no screen for its native pickers here, so the browser asks instead.
+  const pickWorkspace = async () => {
+    const answer = window.prompt("Folder on the host computer to open (for example ~/src/my-project):", "");
+    const entered = answer ? answer.trim() : "";
+    if (!entered) return call("getState", []);
+    try {
+      const folder = await hostCall("resolveFolder", [entered]);
+      return await call("addWorkspacePath", [folder]);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : String(error));
+      return call("getState", []);
+    }
+  };
+  const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+  const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+  const readImage = (file) => new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      const comma = result.indexOf(",");
+      resolve(comma === -1 ? null : {
+        id: crypto.randomUUID(),
+        kind: "image",
+        name: file.name || "photo.jpg",
+        mimeType: file.type,
+        data: result.slice(comma + 1),
+      });
+    };
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(file);
+  });
+  // Files on this device have no path on the host, so only images (sent as data) attach.
+  const pickComposerAttachments = () => new Promise((resolve, reject) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.accept = IMAGE_TYPES.join(",");
+    input.style.display = "none";
+    let settled = false;
+    const finish = (promise) => {
+      if (settled) return;
+      settled = true;
+      input.remove();
+      promise.then(resolve, reject);
+    };
+    input.addEventListener("cancel", () => finish(call("getState", [])));
+    input.addEventListener("change", () => {
+      const files = [...(input.files ?? [])];
+      const tooLarge = files.filter((file) => file.size > MAX_IMAGE_BYTES);
+      if (tooLarge.length > 0) window.alert("Images must be 10 MB or smaller.");
+      const images = files.filter((file) => IMAGE_TYPES.includes(file.type) && file.size <= MAX_IMAGE_BYTES);
+      finish(Promise.all(images.map(readImage)).then((attachments) => {
+        const ready = attachments.filter(Boolean);
+        return ready.length > 0 ? call("addComposerAttachments", [ready]) : call("getState", []);
+      }));
+    });
+    document.body.appendChild(input);
+    // Must run inside the tap that asked for it, or the browser refuses to show the picker.
+    input.click();
+  });
+
   const api = {
     platform,
+    surface: "browser",
     drawsWindowControls: false,
+    pickWorkspace,
+    pickComposerAttachments,
     versions: {},
     getPathForFile: () => "",
     readClipboardImage: () => ({ ok: false }),

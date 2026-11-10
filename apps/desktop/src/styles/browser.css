@@ -1,0 +1,222 @@
+/* =============================================================================
+ * Paired browsers — phones, tablets and other computers that reach pi-gui over
+ * browser access. The browser client marks the document with
+ * `data-pi-surface="browser"`; the desktop app never matches these rules.
+ * ========================================================================== */
+
+/* No traffic lights or native title bar: the sidebar toggle sits at the edge. */
+:root[data-pi-surface="browser"] .shell {
+  --titlebar-toggle-left: 10px;
+}
+
+:root[data-pi-surface="browser"] {
+  /* Keep the text size the app sets; iOS otherwise enlarges it in landscape. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  /* The app scrolls inside its own panes, so the page itself never bounces or reloads. */
+  overscroll-behavior: none;
+}
+
+:root[data-pi-surface="browser"] body {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+/* The client sets --pi-viewport-height from the visual viewport, so the composer stays
+   above the on-screen keyboard. `100dvh` covers the first paint. */
+:root[data-pi-surface="browser"] body,
+:root[data-pi-surface="browser"] #root {
+  height: var(--pi-viewport-height, 100dvh);
+}
+
+/* --------------------------------------------------------------------------
+ * Touch screens
+ * ----------------------------------------------------------------------- */
+@media (pointer: coarse) {
+  /* iOS zooms the page into any field whose text is smaller than 16px and does not
+     zoom back out, which leaves the app cropped. */
+  :root[data-pi-surface="browser"] input,
+  :root[data-pi-surface="browser"] textarea,
+  :root[data-pi-surface="browser"] select,
+  :root[data-pi-surface="browser"] [contenteditable="true"] {
+    font-size: 16px;
+  }
+
+  /* Keyboard shortcuts and their hover tooltips mean nothing without a keyboard, and
+     a tap leaves a hover tooltip stuck open. */
+  :root[data-pi-surface="browser"] .shortcut-tooltip,
+  :root[data-pi-surface="browser"] .workspace-menu__shortcut,
+  :root[data-pi-surface="browser"] .session-row__shortcut,
+  :root[data-pi-surface="browser"] kbd {
+    display: none !important;
+  }
+
+  :root[data-pi-surface="browser"] .icon-button,
+  :root[data-pi-surface="browser"] .sidebar-toggle__button {
+    min-width: 36px;
+    min-height: 36px;
+  }
+
+  :root[data-pi-surface="browser"] .workspace-menu__item {
+    min-height: 40px;
+  }
+
+  /* A tap highlights the whole control on iOS; the app draws its own pressed states. */
+  :root[data-pi-surface="browser"] * {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+/* --------------------------------------------------------------------------
+ * Phone-width screens
+ * ----------------------------------------------------------------------- */
+@media (max-width: 760px) {
+  /* The drawer takes most of the screen, so thread titles stay readable. */
+  :root[data-pi-surface="browser"] .shell:not(.shell--sidebar-collapsed) > .sidebar {
+    width: min(86vw, 360px);
+  }
+
+  :root[data-pi-surface="browser"] .topbar {
+    padding-right: 8px;
+    gap: 6px;
+  }
+
+  /* Room for the sidebar toggle, inside the bar so its border spans the full width. */
+  :root[data-pi-surface="browser"] .shell--sidebar-collapsed .topbar {
+    margin-left: 0;
+    padding-left: calc(var(--titlebar-toggle-left) + 44px);
+  }
+
+  :root[data-pi-surface="browser"] .sidebar-toggle {
+    top: 6px;
+  }
+
+  :root[data-pi-surface="browser"] .topbar__workspace,
+  :root[data-pi-surface="browser"] .topbar__separator,
+  :root[data-pi-surface="browser"] .topbar .chat-header__status {
+    display: none;
+  }
+
+  :root[data-pi-surface="browser"] .topbar__actions {
+    gap: 2px;
+  }
+
+  :root[data-pi-surface="browser"] .canvas--thread {
+    --thread-gutter: 14px;
+  }
+
+  :root[data-pi-surface="browser"] .composer {
+    padding: 8px 10px calc(10px + env(safe-area-inset-bottom, 0px));
+  }
+
+  :root[data-pi-surface="browser"] .composer__surface {
+    padding: 10px;
+  }
+
+  /* Leave room for the transcript while the keyboard is up. */
+  :root[data-pi-surface="browser"] .composer textarea {
+    max-height: 32vh;
+  }
+
+  /* Settings, Skills and Extensions: the section list sits above the page as one
+     scrolling row instead of a fixed column beside it. */
+  :root[data-pi-surface="browser"] .secondary-surface {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  :root[data-pi-surface="browser"] .secondary-surface__sidebar {
+    gap: var(--space-2);
+    padding: 8px 12px 10px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border-default);
+    overflow: visible;
+  }
+
+  :root[data-pi-surface="browser"] .secondary-surface__title,
+  :root[data-pi-surface="browser"] .secondary-surface__nav-group-label {
+    display: none;
+  }
+
+  :root[data-pi-surface="browser"] .secondary-surface__nav {
+    display: flex;
+    gap: 4px;
+    margin-inline: -12px;
+    padding-inline: 12px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  :root[data-pi-surface="browser"] .secondary-surface__nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  :root[data-pi-surface="browser"] .secondary-surface__nav-group {
+    display: flex;
+    gap: 4px;
+    flex: none;
+  }
+
+  :root[data-pi-surface="browser"] .secondary-surface__nav-item {
+    flex: none;
+    min-height: 36px;
+    padding: 0 12px;
+    white-space: nowrap;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-pill);
+  }
+
+  :root[data-pi-surface="browser"] .secondary-surface__content {
+    padding: var(--space-5) 14px calc(var(--space-6) + env(safe-area-inset-bottom, 0px));
+    scrollbar-gutter: auto;
+  }
+
+  /* The content pane already has phone margins; nested page padding would double them. */
+  :root[data-pi-surface="browser"] .secondary-surface__content > .canvas {
+    padding: 0;
+  }
+
+  :root[data-pi-surface="browser"] .secondary-surface__content .settings-view {
+    padding-block: 0;
+  }
+
+  :root[data-pi-surface="browser"] .secondary-surface__content .view-header {
+    margin-bottom: var(--space-5);
+  }
+
+  :root[data-pi-surface="browser"] .settings-row,
+  :root[data-pi-surface="browser"] .settings-field__header,
+  :root[data-pi-surface="browser"] .resource-detail__header,
+  :root[data-pi-surface="browser"] .resource-toolbar,
+  :root[data-pi-surface="browser"] .view-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-2);
+  }
+
+  :root[data-pi-surface="browser"] .settings-row {
+    padding: 12px 14px;
+  }
+
+  /* A switch stays beside its label, as in the phone's own settings. */
+  :root[data-pi-surface="browser"] .settings-row:has(> .settings-row__control > .settings-switch) {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  /* The Create button sits at the left edge on a phone, so its menu opens rightward. */
+  :root[data-pi-surface="browser"] .scheduled-create__menu {
+    left: 0;
+    right: auto;
+  }
+
+  /* Pickers and dialogs keep a small margin instead of a desktop-sized one. */
+  :root[data-pi-surface="browser"] .command-palette-backdrop {
+    padding: 12px 8px;
+  }
+
+  :root[data-pi-surface="browser"] .main--with-side-panel > .side-panel {
+    width: 100%;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+}

@@ -95,6 +95,7 @@ import { useComposerDraftSync } from "../features/conversation/hooks/use-compose
 import { useSessionComposer } from "../features/conversation/hooks/use-session-composer";
 import { useTranscriptAnnotations } from "../features/conversation/annotations/use-transcript-annotations";
 import { SidebarDrawerBackdrop, useNarrowSidebarDrawer } from "../features/threads/sidebar-drawer";
+import { hasHostScreen } from "../lib/surface";
 
 export default function App() {
   const desktop = useDesktopAppState();
@@ -1033,7 +1034,7 @@ export default function App() {
           panelAvailable={sidePanelAvailable}
           panelVisible={sidePanelVisible}
           editorControl={
-            selectedWorkspace ? (
+            selectedWorkspace && hasHostScreen() ? (
               <OpenInEditorButton state={openInEditor} onOpenFolder={openSelectedWorkspaceFolder} />
             ) : undefined
           }

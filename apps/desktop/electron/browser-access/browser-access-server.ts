@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile, writeFile, chmod, rename } from "node:fs/promises";
+import { mkdir, readFile, writeFile, chmod, rename, stat } from "node:fs/promises";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import https from "node:https";
 import net from "node:net";
@@ -124,7 +124,14 @@ async function loadOrCreateToken(tokenFile: string): Promise<string> {
   return token;
 }
 
-function injectClientScript(html: string): string {
+/** Phones lay the app out edge to edge, under the notch and home indicator. */
+const BROWSER_VIEWPORT = "width=device-width, initial-scale=1, viewport-fit=cover";
+
+function injectClientScript(source: string): string {
+  const html = source.replace(
+    /<meta\s+name="viewport"[^>]*>/i,
+    `<meta name="viewport" content="${BROWSER_VIEWPORT}" />`,
+  );
   const tag = browserHeadTags;
   const head = /<head[^>]*>/i.exec(html);
   if (!head) return tag + html;
@@ -656,6 +663,21 @@ export class BrowserAccessServer {
       if (!isPushSubscription(first)) throw new Error("That push subscription is not valid.");
       await this.push.add(first);
       return true;
+    }
+    if (member === "resolveFolder") {
+      // The browser has no folder picker for the host, so it sends a typed path.
+      if (typeof first !== "string" || first.trim().length === 0) {
+        throw new Error("Enter a folder path.");
+      }
+      const typed = first.trim();
+      const expanded =
+        typed === "~" || typed.startsWith("~/") ? path.join(os.homedir(), typed.slice(1)) : typed;
+      if (!path.isAbsolute(expanded)) {
+        throw new Error("Enter a full path, such as ~/src/my-project.");
+      }
+      const info = await stat(expanded).catch(() => undefined);
+      if (!info?.isDirectory()) throw new Error(`There is no folder at ${typed}.`);
+      return path.resolve(expanded);
     }
     if (member === "pushUnsubscribe") {
       if (typeof first !== "string") throw new Error("An endpoint is required.");

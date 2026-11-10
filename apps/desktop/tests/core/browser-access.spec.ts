@@ -1,5 +1,5 @@
 import { createDecipheriv, createECDH, createHmac, randomBytes } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, realpath, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer, request, type Server } from "node:http";
 import { createServer } from "node:net";
 import { basename, join } from "node:path";
@@ -170,6 +170,7 @@ test("a browser tab drives pi-gui through its own window view", async () => {
   const userDataDir = await makeUserDataDir();
   const agentDir = join(userDataDir, "agent");
   const workspace = await makeWorkspace("browser-access");
+  const secondWorkspace = await makeWorkspace("browser-access-opened");
   const server = await startScriptedOpenAiServer(() => ({ text: BROWSER_REPLY }));
   await seedAgentDir(agentDir, {
     withOpenAiAuth: false,
@@ -245,14 +246,38 @@ test("a browser tab drives pi-gui through its own window view", async () => {
       expect(thread).toBeDefined();
     });
 
-    await test.step("host-only actions are refused in the browser", async () => {
+    await test.step("host-only actions are refused and hidden in the browser", async () => {
       const message = await browser.evaluate(() =>
-        globalThis.window.piApp.pickWorkspace().then(
+        globalThis.window.piApp.openWorkspaceInFinder("any").then(
           () => "resolved",
           (error: unknown) => (error instanceof Error ? error.message : String(error)),
         ),
       );
       expect(message).toContain("not available in the browser");
+      expect(await browser.evaluate(() => document.documentElement.dataset.piSurface)).toBe(
+        "browser",
+      );
+      expect(await browser.locator('meta[name="viewport"]').getAttribute("content")).toContain(
+        "viewport-fit=cover",
+      );
+      await expect(desktop.getByTestId("open-in-editor")).toBeVisible();
+      await expect(browser.getByTestId("open-in-editor")).toHaveCount(0);
+    });
+
+    await test.step("Open folder in the browser asks for a path on the host", async () => {
+      const result = await browser.evaluate(async (folder) => {
+        const answers = ["~/no-such-folder-for-this-test", folder];
+        const alerts: string[] = [];
+        window.prompt = () => answers.shift() ?? null;
+        window.alert = (text?: unknown) => {
+          alerts.push(String(text));
+        };
+        await globalThis.window.piApp.pickWorkspace();
+        const state = await globalThis.window.piApp.pickWorkspace();
+        return { alerts, paths: state.workspaces.map((entry) => entry.path) };
+      }, secondWorkspace);
+      expect(result.alerts).toEqual(["There is no folder at ~/no-such-folder-for-this-test."]);
+      expect(result.paths).toContain(await realpath(secondWorkspace));
     });
 
     // A second tab speaks the wire protocol directly: Electron has no push service, so it

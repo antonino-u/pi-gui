@@ -121,6 +121,7 @@ ipcRenderer.on(desktopIpc.appCommand, (_event, command: PiDesktopCommand) => {
 contextBridge.exposeInMainWorld("piApp", {
   platform: process.platform,
   drawsWindowControls: process.argv.includes(drawWindowControlsArgument),
+  surface: "desktop",
   versions: process.versions,
   ping: () => ipcRenderer.invoke(desktopIpc.ping) as Promise<string>,
   getState: () => ipcRenderer.invoke(desktopIpc.stateRequest) as Promise<DesktopAppState>,

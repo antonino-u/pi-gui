@@ -109,8 +109,6 @@ test("secrets, cookies and loopback peers are compared exactly", () => {
 
 test("members that act on the host's own screen are never forwarded", () => {
   for (const member of [
-    "pickWorkspace",
-    "pickComposerAttachments",
     "openWorkspaceInFinder",
     "openWorkspaceInEditor",
     "revealWorkspaceFile",
@@ -121,7 +119,11 @@ test("members that act on the host's own screen are never forwarded", () => {
     expect(browserAccessPolicy[member]).toBe("blocked");
     expect(browserAccessCallMembers).not.toContain(member);
   }
-  expect(browserAccessBlockedMembers).toContain("pickWorkspace");
+  expect(browserAccessBlockedMembers).toContain("openWorkspaceInFinder");
+  // The browser answers these itself: a typed folder path, and its own photo picker.
+  expect(browserAccessPolicy.pickWorkspace).toBe("local");
+  expect(browserAccessPolicy.pickComposerAttachments).toBe("local");
+  expect(browserAccessPolicy.surface).toBe("local");
   expect(browserAccessEventMembers).toEqual(
     expect.arrayContaining(["onStateChanged", "onSelectedTranscriptChanged", "onTerminalData"]),
   );

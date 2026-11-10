@@ -6,6 +6,7 @@ import { SettingsGroup, SettingsRow } from "../settings/settings-utils";
 import { sourceScopeGroupLabel } from "./extension-display";
 import { displayPath, ResourceDetail } from "./resource-detail";
 import { ResourceEmptyState, ResourceList, type ResourceListGroup } from "./resource-list";
+import { hasHostScreen } from "../../lib/surface";
 
 const GROUP_ORDER = ["Workspace", "User", "This session"];
 
@@ -58,13 +59,15 @@ export function SkillsTab({
         <ResourceDetail
           actions={
             <>
-              <button
-                className="button button--secondary"
-                type="button"
-                onClick={() => onOpenSkillFolder(selected.filePath)}
-              >
-                Open folder
-              </button>
+              {hasHostScreen() ? (
+                <button
+                  className="button button--secondary"
+                  type="button"
+                  onClick={() => onOpenSkillFolder(selected.filePath)}
+                >
+                  Open folder
+                </button>
+              ) : null}
               <button
                 className="button button--primary"
                 type="button"

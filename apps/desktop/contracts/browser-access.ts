@@ -7,8 +7,9 @@ import type { PiDesktopApi } from "./ipc";
  *   method and returns the result.
  * - `event`: the bridge window subscribes once and forwards every event to the browser.
  * - `local`: the browser answers without the host (static values or browser equivalents).
- * - `blocked`: the member acts on the host's own screen or devices (native pickers, Finder,
- *   OS permissions, window controls), so the browser rejects it.
+ * - `blocked`: the member acts on the host's own screen or devices (Finder, editors, OS
+ *   permissions, OAuth sign-in), so the browser rejects it. Native pickers are `local`: the
+ *   browser asks for a folder path, and offers its own photo picker for images.
  *
  * The `satisfies` clause makes every member of `PiDesktopApi` choose a policy.
  */
@@ -17,6 +18,7 @@ export type BrowserAccessPolicy = "call" | "event" | "local" | "blocked";
 export const browserAccessPolicy = {
   platform: "local",
   drawsWindowControls: "local",
+  surface: "local",
   versions: "local",
   ping: "call",
   getState: "call",
@@ -32,7 +34,7 @@ export const browserAccessPolicy = {
   onClipboardImagePasted: "event",
   getPathForFile: "local",
   addWorkspacePath: "call",
-  pickWorkspace: "blocked",
+  pickWorkspace: "local",
   selectWorkspace: "call",
   renameWorkspace: "call",
   removeWorkspace: "call",
@@ -111,7 +113,7 @@ export const browserAccessPolicy = {
   requestNotificationPermission: "local",
   openSystemNotificationSettings: "blocked",
   onNotificationPermissionStatusChanged: "local",
-  pickComposerAttachments: "blocked",
+  pickComposerAttachments: "local",
   readClipboardImage: "local",
   addComposerAttachments: "call",
   removeComposerAttachment: "call",

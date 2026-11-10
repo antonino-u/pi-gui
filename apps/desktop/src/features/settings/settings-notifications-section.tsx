@@ -1,6 +1,7 @@
 import type { DesktopNotificationPermissionStatus } from "../../../contracts/ipc";
 import type { NotificationPreferences } from "../../../contracts/desktop-state";
 import { useTranslation, type Translate } from "../../i18n";
+import { hasHostScreen } from "../../lib/surface";
 import { SettingsSwitch } from "./settings-controls";
 import { SettingsGroup, SettingsRow } from "./settings-utils";
 
@@ -22,20 +23,34 @@ export function SettingsNotificationsSection({
   onOpenSystemNotificationSettings,
 }: SettingsNotificationsSectionProps) {
   const { t } = useTranslation();
+  // A paired browser asks its own browser, not macOS, and cannot open System Settings.
+  const browser = !hasHostScreen();
   const statusLabel = labelForPermissionStatus(t, notificationPermissionStatus);
-  const statusDescription = descriptionForPermissionStatus(t, notificationPermissionStatus);
+  const statusDescription = descriptionForPermissionStatus(
+    t,
+    notificationPermissionStatus,
+    browser,
+  );
   const showAskMacOs = notificationPermissionStatus === "default";
-  const showOpenSystemSettings = notificationPermissionStatus === "denied";
+  const showOpenSystemSettings = notificationPermissionStatus === "denied" && !browser;
   const showRecoveryActions = showAskMacOs || showOpenSystemSettings;
 
   return (
     <>
       <SettingsGroup
         title={t("settings.notifications.groupSystem")}
-        description={t("settings.notifications.groupSystem.description")}
+        description={
+          browser
+            ? t("settings.notifications.browser.groupSystem.description")
+            : t("settings.notifications.groupSystem.description")
+        }
       >
         <SettingsRow
-          title={t("settings.notifications.access.title")}
+          title={
+            browser
+              ? t("settings.notifications.browser.access.title")
+              : t("settings.notifications.access.title")
+          }
           description={statusDescription}
         >
           <span className="settings-row__value">{statusLabel}</span>
@@ -45,7 +60,9 @@ export function SettingsNotificationsSection({
             title={t("settings.notifications.turnOn.title")}
             description={
               showAskMacOs
-                ? t("settings.notifications.turnOn.descriptionAsk")
+                ? browser
+                  ? t("settings.notifications.browser.turnOn.descriptionAsk")
+                  : t("settings.notifications.turnOn.descriptionAsk")
                 : t("settings.notifications.turnOn.descriptionOpen")
             }
           >
@@ -57,7 +74,9 @@ export function SettingsNotificationsSection({
                   type="button"
                   onClick={onRequestNotificationPermission}
                 >
-                  {t("settings.notifications.turnOn.ask")}
+                  {browser
+                    ? t("settings.notifications.browser.turnOn.ask")
+                    : t("settings.notifications.turnOn.ask")}
                 </button>
               ) : null}
               {showOpenSystemSettings ? (
@@ -77,7 +96,11 @@ export function SettingsNotificationsSection({
 
       <SettingsGroup
         title={t("settings.notifications.groupInApp")}
-        description={t("settings.notifications.groupInApp.description")}
+        description={
+          browser
+            ? t("settings.notifications.browser.groupInApp.description")
+            : t("settings.notifications.groupInApp.description")
+        }
       >
         <SettingsRow
           title={t("settings.notifications.completion.title")}
@@ -135,7 +158,22 @@ function labelForPermissionStatus(
 function descriptionForPermissionStatus(
   t: Translate,
   status: DesktopNotificationPermissionStatus,
+  browser: boolean,
 ): string {
+  if (browser) {
+    switch (status) {
+      case "granted":
+        return t("settings.notifications.browser.access.descriptionGranted");
+      case "denied":
+        return t("settings.notifications.browser.access.descriptionDenied");
+      case "default":
+        return t("settings.notifications.browser.access.descriptionDefault");
+      case "unsupported":
+        return t("settings.notifications.browser.access.descriptionUnsupported");
+      default:
+        break;
+    }
+  }
   switch (status) {
     case "granted":
       return t("settings.notifications.access.descriptionGranted");

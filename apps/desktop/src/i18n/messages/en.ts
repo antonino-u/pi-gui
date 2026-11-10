@@ -232,6 +232,22 @@ export const en = {
     "macOS notifications are already turned off for pi-gui. Open System Settings to enable them again.",
   "settings.notifications.turnOn.ask": "Ask macOS",
   "settings.notifications.turnOn.openSettings": "Open System Settings",
+  "settings.notifications.browser.groupSystem.description":
+    "This browser decides whether pi-gui can send notifications to this device.",
+  "settings.notifications.browser.access.title": "Browser notification access",
+  "settings.notifications.browser.access.descriptionGranted":
+    "This device gets a notification when a thread finishes, fails or needs input.",
+  "settings.notifications.browser.access.descriptionDenied":
+    "Notifications are turned off for pi-gui in this browser. Turn them on in this device's settings.",
+  "settings.notifications.browser.access.descriptionDefault":
+    "Allow notifications to hear about threads while pi-gui is in the background.",
+  "settings.notifications.browser.access.descriptionUnsupported":
+    "This browser cannot receive notifications here. On iPhone and iPad, add pi-gui to the Home Screen and open it from there.",
+  "settings.notifications.browser.turnOn.descriptionAsk":
+    "The browser asks once, and this device then gets notifications even when pi-gui is closed.",
+  "settings.notifications.browser.turnOn.ask": "Allow notifications",
+  "settings.notifications.browser.groupInApp.description":
+    "Choose which background events notify this device once notifications are allowed.",
   "settings.notifications.groupInApp": "In-app alerts",
   "settings.notifications.groupInApp.description":
     "Choose which background events should try to notify once macOS access is enabled.",

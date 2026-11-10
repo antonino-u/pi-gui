@@ -14,6 +14,7 @@ import {
 } from "./extension-display";
 import { displayPath, ResourceDetail } from "./resource-detail";
 import { ResourceEmptyState, ResourceList, type ResourceListGroup } from "./resource-list";
+import { hasHostScreen } from "../../lib/surface";
 
 const GROUP_ORDER = ["Workspace", "User", "This session", PI_ADDONS_LABEL, PI_GUI_TOOLS_LABEL];
 
@@ -87,7 +88,7 @@ function ExtensionDetail({
 }: Omit<ExtensionsTabProps, "extensions" | "searching" | "selected"> & {
   readonly selected: RuntimeExtensionRecord;
 }) {
-  const hasFolder = isFolderExtension(selected);
+  const hasFolder = isFolderExtension(selected) && hasHostScreen();
   const compatibilityRecords = commandCompatibility
     .filter((record) => record.extensionPath === selected.path)
     .sort((left, right) => left.commandName.localeCompare(right.commandName));

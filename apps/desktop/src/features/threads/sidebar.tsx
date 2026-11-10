@@ -80,6 +80,7 @@ import { useThreadShortcutHintsVisible } from "./thread-shortcut-hints";
 import type { Dispatch, SetStateAction } from "react";
 import type { DesktopAppState } from "../../../contracts/desktop-state";
 import { applySnapshotIfNewer } from "../../app/desktop-app-state";
+import { hasHostScreen } from "../../lib/surface";
 
 interface SidebarProps {
   readonly activeView: AppView;
@@ -896,19 +897,21 @@ function WorkspaceFolderContent(
             </button>
             {wsMenu.workspaceMenuId === workspace.id ? (
               <div className="workspace-menu">
-                <button
-                  className="workspace-menu__item"
-                  type="button"
-                  onClick={(event) =>
-                    wsMenu.runWorkspaceMenuAction(event, () => {
-                      void api.openWorkspaceInFinder(workspace.id).catch((error: unknown) => {
-                        console.error("[renderer] openWorkspaceInFinder failed", error);
-                      });
-                    })
-                  }
-                >
-                  Open folder
-                </button>
+                {hasHostScreen() ? (
+                  <button
+                    className="workspace-menu__item"
+                    type="button"
+                    onClick={(event) =>
+                      wsMenu.runWorkspaceMenuAction(event, () => {
+                        void api.openWorkspaceInFinder(workspace.id).catch((error: unknown) => {
+                          console.error("[renderer] openWorkspaceInFinder failed", error);
+                        });
+                      })
+                    }
+                  >
+                    Open folder
+                  </button>
+                ) : null}
                 {linkedWorktree ? (
                   <button
                     className="workspace-menu__item workspace-menu__item--danger"

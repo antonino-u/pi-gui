@@ -13,6 +13,7 @@ import {
   type FileLineMark,
   type FileWorkbenchTabs,
 } from "./file-workbench-state";
+import { hasHostScreen } from "../../lib/surface";
 
 interface FileEditorPaneProps {
   readonly api: PiDesktopApi;
@@ -175,18 +176,20 @@ export function FileEditorPane({
             >
               <CopyIcon />
             </button>
-            <button
-              className="file-workbench__mode"
-              disabled={!activePath}
-              type="button"
-              onClick={() => {
-                void api.revealWorkspaceFile(workspace.id, activePath).catch((error: unknown) => {
-                  setViewerError(error instanceof Error ? error.message : String(error));
-                });
-              }}
-            >
-              Open
-            </button>
+            {hasHostScreen() ? (
+              <button
+                className="file-workbench__mode"
+                disabled={!activePath}
+                type="button"
+                onClick={() => {
+                  void api.revealWorkspaceFile(workspace.id, activePath).catch((error: unknown) => {
+                    setViewerError(error instanceof Error ? error.message : String(error));
+                  });
+                }}
+              >
+                Open
+              </button>
+            ) : null}
           </div>
         ) : null}
       </div>

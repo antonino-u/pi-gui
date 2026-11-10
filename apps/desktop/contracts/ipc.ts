@@ -724,6 +724,11 @@ export interface PiDesktopApi {
   platform: NodeJS.Platform;
   /** True when the window has no native title bar and the app draws its own. */
   drawsWindowControls: boolean;
+  /**
+   * Where the renderer runs. `browser` is a paired browser on any device: actions that use
+   * the host's own screen (Finder, editors, native pickers) are unavailable there.
+   */
+  surface: "desktop" | "browser";
   versions: NodeJS.ProcessVersions;
   ping(): Promise<string>;
   getState(): Promise<DesktopAppState>;
