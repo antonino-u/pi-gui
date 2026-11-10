@@ -422,6 +422,9 @@ function buildDesktopLaunchEnv(
   // Explicit envOverrides remain available for tests of environment configuration.
   for (const key of Object.keys(baseEnv)) {
     if (isProviderAuthEnvVar(key)) delete baseEnv[key];
+    // A test opts into browser access explicitly; an ambient setting would open a server
+    // (and its own certificate) in every launched app.
+    if (key.startsWith("PI_APP_BROWSER_ACCESS")) delete baseEnv[key];
   }
   const env = {
     ...baseEnv,
