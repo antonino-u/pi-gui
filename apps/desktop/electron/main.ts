@@ -1026,8 +1026,15 @@ if (!hasSingleInstanceLock) {
 }
 
 app.on("second-instance", () => {
+  // Startup has not finished yet; the first window opens when it does.
+  if (!windowOwner) {
+    return;
+  }
   const window = windowOwner.foreground();
   if (!window) {
+    // Launching the app again with every window closed (macOS keeps the app running)
+    // opens a new window, as clicking the Dock icon does.
+    createAppWindow();
     return;
   }
   if (window.isMinimized()) {
