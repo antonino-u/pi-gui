@@ -175,7 +175,8 @@ export class BrowserAccessServer {
     maxPayload: MAX_FRAME_BYTES,
   });
   private readonly tabs = new Map<string, TabRecord>();
-  private readonly allowedHosts: ReadonlySet<string>;
+  private allowedHostsCache:
+    { readonly names: ReadonlySet<string>; readonly at: number } | undefined;
   private readonly push: PushRegistry;
   private pushQueue: Promise<void> = Promise.resolve();
   private token = "";
@@ -183,7 +184,6 @@ export class BrowserAccessServer {
   private bridgePort = 0;
 
   constructor(private readonly options: BrowserAccessServerOptions) {
-    this.allowedHosts = localHostnames(options.extraHostnames);
     this.push = new PushRegistry(options.pushFile);
     const handle = (request: IncomingMessage, response: ServerResponse) => {
       void this.handleRequest(request, response).catch((error: unknown) => {
@@ -297,6 +297,18 @@ export class BrowserAccessServer {
       }
     };
     this.pushQueue = this.pushQueue.then(deliver, deliver);
+  }
+
+  /**
+   * This machine's names and addresses. Re-read every few seconds, so a laptop that joins
+   * another network keeps working without a restart.
+   */
+  private get allowedHosts(): ReadonlySet<string> {
+    const now = Date.now();
+    if (!this.allowedHostsCache || now - this.allowedHostsCache.at > 5_000) {
+      this.allowedHostsCache = { names: localHostnames(this.options.extraHostnames), at: now };
+    }
+    return this.allowedHostsCache.names;
   }
 
   private isWildcardHost(): boolean {
