@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { translate, type MessageKey, type Translate } from "../../i18n";
 import {
   BellIcon,
+  BrowserPreviewIcon,
   ExtensionIcon,
   KeyboardIcon,
   ModelIcon,
@@ -55,6 +56,15 @@ export const SETTINGS_SECTIONS = [
     icon: <BellIcon />,
     keywords: ["alerts", "background", "completion", "failures", "approval", "macos"],
     descriptionKey: "settings.section.notifications.description",
+    needsWorkspace: false,
+  },
+  {
+    id: "browserAccess",
+    titleKey: "settings.nav.browserAccess",
+    groupKey: "settings.group.app",
+    icon: <BrowserPreviewIcon />,
+    keywords: ["phone", "mobile", "iphone", "remote", "pair", "qr", "devices", "browser"],
+    descriptionKey: "settings.section.browserAccess.description",
     needsWorkspace: false,
   },
   {

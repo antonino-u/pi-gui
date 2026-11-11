@@ -73,6 +73,7 @@ const requiredPackages = [
   "partial-json",
   "proper-lockfile",
   "proxy-agent",
+  "qrcode-generator",
   "retry",
   "semver",
   "shebang-command",

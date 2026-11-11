@@ -148,6 +148,7 @@ export const en = {
   "settings.nav.general": "General",
   "settings.nav.appearance": "Appearance",
   "settings.nav.notifications": "Notifications",
+  "settings.nav.browserAccess": "Browser access",
   "settings.nav.shortcuts": "Keyboard shortcuts",
   "settings.nav.providers": "Providers",
   "settings.nav.models": "Models",
@@ -160,6 +161,41 @@ export const en = {
   "settings.section.appearance.description":
     "Choose light, dark or system mode and a color preset.",
   "settings.section.notifications.description": "Choose which background events alert you.",
+  "settings.section.browserAccess.description":
+    "Use pi-gui from a browser on your phone or another computer.",
+  "settings.browserAccess.groupStatus": "Addresses",
+  "settings.browserAccess.off.title": "Browser access is off",
+  "settings.browserAccess.off.description":
+    "Start pi-gui with PI_APP_BROWSER_ACCESS set (for example to 0.0.0.0:7480) to reach it from other devices.",
+  "settings.browserAccess.addresses.https":
+    "Open one of these on a device on the same network. The connection is encrypted.",
+  "settings.browserAccess.addresses.http":
+    "Open one of these on a device on the same network. The connection is not encrypted, and phones cannot receive notifications without HTTPS.",
+  "settings.browserAccess.copyAddress": "Copy address",
+  "settings.browserAccess.groupPair": "Pair a device",
+  "settings.browserAccess.pair.description":
+    "A device needs pairing once. A code works one time and expires after five minutes.",
+  "settings.browserAccess.pair.title": "New pairing code",
+  "settings.browserAccess.pair.action": "Pair a device",
+  "settings.browserAccess.pair.qrAlt": "QR code that pairs a device",
+  "settings.browserAccess.pair.expires":
+    "Scan the code with the device's camera. Expires in {time}.",
+  "settings.browserAccess.pair.orType": "Or open {address} on the device and enter the code.",
+  "settings.browserAccess.pair.expired": "The last code expired.",
+  "settings.browserAccess.groupDevices": "Paired devices",
+  "settings.browserAccess.devices.description":
+    "Each device has its own key. Revoking one closes its tabs and stops its notifications.",
+  "settings.browserAccess.devices.none": "No devices are paired yet.",
+  "settings.browserAccess.devices.connected": "{name} · Connected",
+  "settings.browserAccess.devices.seen": "Paired {paired} · Last used {seen}",
+  "settings.browserAccess.revoke.action": "Revoke",
+  "settings.browserAccess.revoke.confirm": "Revoke {name}? It will need pairing again.",
+  "settings.browserAccess.resetLink.title": "Reusable pairing link",
+  "settings.browserAccess.resetLink.description":
+    "The link the launcher shows pairs any device that opens it. Reset it if it may have been shared; paired devices stay paired.",
+  "settings.browserAccess.resetLink.action": "Reset link",
+  "settings.browserAccess.resetLink.confirm":
+    "Reset the reusable pairing link? Devices already paired stay paired.",
   "settings.section.shortcuts.description": "Shortcuts available across the app.",
   "settings.section.providers.description": "Connect providers and manage auth for {workspace}.",
   "settings.section.models.description":

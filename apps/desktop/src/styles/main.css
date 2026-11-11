@@ -3451,3 +3451,39 @@ mark.thread-find-active {
   border: 1px solid var(--border-default);
   color: var(--muted-soft);
 }
+
+/* Settings > Browser access: the pairing QR code and its one-time code. */
+.browser-access-pairing {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 14px 18px;
+}
+
+.browser-access-pairing__qr {
+  flex: none;
+  width: 168px;
+  height: 168px;
+  border-radius: var(--radius-md);
+  image-rendering: pixelated;
+}
+
+.browser-access-pairing__details {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.browser-access-pairing__code {
+  color: var(--text-strong);
+  font-family: var(--font-mono);
+  font-size: 24px;
+  letter-spacing: 0.08em;
+}
+
+@media (max-width: 520px) {
+  .browser-access-pairing {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

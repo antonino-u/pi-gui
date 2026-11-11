@@ -216,7 +216,9 @@ test("a browser tab drives pi-gui through its own window view", async () => {
     const token = await readPairingToken(userDataDir);
 
     await test.step("an unpaired browser is refused", async () => {
-      expect((await fetch(`${origin}/`)).status).toBe(403);
+      const unpaired = await fetch(`${origin}/`, { redirect: "manual" });
+      expect(unpaired.status).toBe(302);
+      expect(unpaired.headers.get("location")).toBe("/__pi-browser/pair");
       expect((await fetch(`${origin}/__pi-browser/pair?token=wrong`)).status).toBe(403);
       expect(await statusWithHost(port, "attacker.example")).toBe(421);
     });
@@ -408,6 +410,40 @@ test("a browser tab drives pi-gui through its own window view", async () => {
       // Pushes go out in order, so the third arriving second proves the second was skipped.
       await expect.poll(() => pushService.received.length).toBe(2);
       await expect.poll(notificationCount).toBe(before + 2);
+    });
+
+    await test.step("Settings pairs a device with a one-time code and revokes one", async () => {
+      await desktop.evaluate(() => globalThis.window.piApp.setActiveView("settings"));
+      await desktop.getByRole("button", { name: "Browser access" }).click();
+      await expect(desktop.getByText("Paired devices", { exact: true })).toBeVisible();
+      await desktop.getByRole("button", { name: "Pair a device" }).click();
+      const code = (await desktop.getByTestId("browser-access-code").innerText()).replace(
+        /\s/g,
+        "",
+      );
+      expect(code).toMatch(/^[A-HJKMNP-Z2-9]{8}$/);
+      await expect(desktop.locator(".browser-access-pairing__qr")).toBeVisible();
+
+      const paired = await fetch(`${origin}/__pi-browser/pair?code=${code}`, {
+        redirect: "manual",
+      });
+      expect(paired.status).toBe(302);
+      const reused = await fetch(`${origin}/__pi-browser/pair?code=${code}`, {
+        redirect: "manual",
+      });
+      expect(reused.status).toBe(403);
+      await expect(desktop.getByTestId("browser-access-revoke")).toHaveCount(2);
+
+      // Revoke the device whose tab is open: the tab leaves for the pairing page.
+      await desktop.evaluate(() => {
+        window.confirm = () => true;
+      });
+      await desktop
+        .locator(".settings-row", { hasText: "Connected" })
+        .getByTestId("browser-access-revoke")
+        .click();
+      await expect(desktop.getByTestId("browser-access-revoke")).toHaveCount(1);
+      await expect.poll(() => new URL(browser.url()).pathname).toBe("/__pi-browser/pair");
     });
   } finally {
     await harness.close();

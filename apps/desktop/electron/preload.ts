@@ -34,6 +34,7 @@ import {
 } from "../contracts/ipc";
 import type { ExtensionActionEffect, ExtensionActionRequest } from "../contracts/extension-actions";
 import type { ClipboardImageRead } from "../contracts/composer-attachments";
+import type { BrowserAccessStatus, BrowserPairingCode } from "../contracts/browser-access";
 import type { DesktopEditorList } from "../contracts/editors";
 import type { SaveTaskWorkbenchTemplateInput, TaskWorkbenchTemplate } from "../contracts/workbench";
 import type {
@@ -636,4 +637,12 @@ contextBridge.exposeInMainWorld("piApp", {
     };
   },
   relaunchApplication: () => ipcRenderer.invoke(desktopIpc.relaunchApplication) as Promise<void>,
+  getBrowserAccessStatus: () =>
+    ipcRenderer.invoke(desktopIpc.getBrowserAccessStatus) as Promise<BrowserAccessStatus>,
+  createBrowserPairingCode: () =>
+    ipcRenderer.invoke(desktopIpc.createBrowserPairingCode) as Promise<BrowserPairingCode>,
+  revokeBrowserDevice: (deviceId: string) =>
+    ipcRenderer.invoke(desktopIpc.revokeBrowserDevice, deviceId) as Promise<BrowserAccessStatus>,
+  resetBrowserPairingLink: () =>
+    ipcRenderer.invoke(desktopIpc.resetBrowserPairingLink) as Promise<BrowserAccessStatus>,
 } satisfies PiDesktopApi);

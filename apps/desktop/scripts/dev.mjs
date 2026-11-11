@@ -38,6 +38,7 @@ async function main() {
       desktopDir,
     ),
     start("pnpm", ["--dir", repoRoot, "--filter", extensionUiPackage, "run", "watch"], desktopDir),
+    start("node", ["scripts/build-browser-access.mjs", "--watch"], desktopDir),
     start("pnpm", ["exec", "electron-vite", "dev", "--watch", ...extraArgs], desktopDir),
   ];
 

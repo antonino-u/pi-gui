@@ -14,6 +14,7 @@ import type {
   SessionTreeSnapshot,
 } from "@pi-gui/session-driver/types";
 import type { ClipboardImageRead } from "./composer-attachments";
+import type { BrowserAccessStatus, BrowserPairingCode } from "./browser-access";
 import type { DesktopEditorList } from "./editors";
 import type { SessionRef } from "@pi-gui/session-driver/types";
 import type { SaveTaskWorkbenchTemplateInput, TaskWorkbenchTemplate } from "./workbench";
@@ -244,6 +245,10 @@ export const desktopIpc = {
   ping: "app:ping",
   openExternal: "app:open-external",
   relaunchApplication: "pi-gui:relaunch-application",
+  getBrowserAccessStatus: "pi-gui:browser-access-status",
+  createBrowserPairingCode: "pi-gui:browser-access-create-pairing-code",
+  revokeBrowserDevice: "pi-gui:browser-access-revoke-device",
+  resetBrowserPairingLink: "pi-gui:browser-access-reset-pairing-link",
 } as const;
 
 export const desktopCommands = {
@@ -944,4 +949,10 @@ export interface PiDesktopApi {
   /** The window came back to the foreground, so outside changes (edits, git) may need rereading. */
   onWindowFocused(listener: () => void): () => void;
   relaunchApplication(): Promise<void>;
+  /** Browser access (other devices reaching this app). */
+  getBrowserAccessStatus(): Promise<BrowserAccessStatus>;
+  createBrowserPairingCode(): Promise<BrowserPairingCode>;
+  revokeBrowserDevice(deviceId: string): Promise<BrowserAccessStatus>;
+  /** Replaces the reusable pairing link; devices already paired stay paired. */
+  resetBrowserPairingLink(): Promise<BrowserAccessStatus>;
 }

@@ -156,6 +156,11 @@ export const browserAccessPolicy = {
   onThemeChanged: "event",
   onWindowFocused: "local",
   relaunchApplication: "blocked",
+  // A paired device already has full access, so it may pair or revoke others too.
+  getBrowserAccessStatus: "call",
+  createBrowserPairingCode: "call",
+  revokeBrowserDevice: "call",
+  resetBrowserPairingLink: "call",
 } as const satisfies Record<keyof PiDesktopApi, BrowserAccessPolicy>;
 
 export type BrowserAccessMember = keyof typeof browserAccessPolicy;
@@ -166,9 +171,9 @@ function membersWithPolicy(policy: BrowserAccessPolicy): readonly BrowserAccessM
   );
 }
 
-export const browserAccessCallMembers = membersWithPolicy("call");
-export const browserAccessEventMembers = membersWithPolicy("event");
-export const browserAccessBlockedMembers = membersWithPolicy("blocked");
+export const browserAccessCallMembers = /* @__PURE__ */ membersWithPolicy("call");
+export const browserAccessEventMembers = /* @__PURE__ */ membersWithPolicy("event");
+export const browserAccessBlockedMembers = /* @__PURE__ */ membersWithPolicy("blocked");
 
 /** Path prefix the host reserves for browser access; the renderer build lives outside it. */
 export const BROWSER_ACCESS_PREFIX = "/__pi-browser";
@@ -193,3 +198,34 @@ export type BrowserAccessFrame =
   | { readonly t: "event"; readonly m: string; readonly p: readonly unknown[] }
   /** Host to browser: the tab is attached to a bridge window (`resumed` when reattached). */
   | { readonly t: "ready"; readonly resumed: boolean };
+
+/** A device paired with browser access, as Settings lists it. */
+export interface BrowserDeviceInfo {
+  readonly id: string;
+  /** From the device's browser when it paired, such as "iPhone · Safari". */
+  readonly name: string;
+  readonly pairedAt: string;
+  readonly lastSeenAt: string;
+  /** True while one of the device's tabs is connected. */
+  readonly connected?: boolean;
+}
+
+export type BrowserAccessStatus =
+  | { readonly enabled: false }
+  | {
+      readonly enabled: true;
+      readonly https: boolean;
+      /** Addresses browsers can open, one per network interface, such as https://10.0.0.5:7480. */
+      readonly addresses: readonly string[];
+      readonly devices: readonly BrowserDeviceInfo[];
+    };
+
+/** A one-time code that pairs one more device. */
+export interface BrowserPairingCode {
+  readonly code: string;
+  readonly expiresAt: string;
+  /** Opening this link pairs the device that opens it. */
+  readonly url: string;
+  /** The link as a QR code, an SVG document. */
+  readonly qrSvg: string;
+}

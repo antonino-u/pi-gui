@@ -251,7 +251,8 @@
   }
 
   /* A switch stays beside its label, as in the phone's own settings. */
-  :root[data-pi-surface="browser"] .settings-row:has(> .settings-row__control > .settings-switch) {
+  :root[data-pi-surface="browser"] .settings-row:has(> .settings-row__control > .settings-switch),
+  :root[data-pi-surface="browser"] .settings-row:has(> .settings-row__control > .icon-button) {
     flex-direction: row;
     align-items: center;
   }

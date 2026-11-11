@@ -19,6 +19,7 @@ import { SettingsGeneralSection } from "./settings-general-section";
 import { type McpSettingsActions, SettingsMcpSection } from "./settings-mcp-section";
 import { SettingsModelsSection } from "./settings-models-section";
 import { SettingsNotificationsSection } from "./settings-notifications-section";
+import { SettingsBrowserAccessSection } from "./settings-browser-access-section";
 import { SettingsProvidersSection } from "./settings-providers-section";
 import { type SettingsSection, settingsSectionDefinition } from "./settings-sections";
 import { SettingsShortcutsSection } from "./settings-shortcuts-section";
@@ -164,6 +165,8 @@ export function SettingsView({
           ) : null}
 
           {section === "shortcuts" ? <SettingsShortcutsSection platform={platform} /> : null}
+
+          {section === "browserAccess" ? <SettingsBrowserAccessSection /> : null}
 
           {section === "providers" ? (
             <SettingsProvidersSection

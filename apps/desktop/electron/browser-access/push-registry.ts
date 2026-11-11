@@ -12,7 +12,13 @@ const MAX_SUBSCRIPTIONS = 20;
 interface PushRegistryFile {
   readonly version: 1;
   readonly vapid: VapidKeys;
-  readonly subscriptions: readonly (StoredPushSubscription & { readonly createdAt: string })[];
+  readonly subscriptions: readonly StoredEntry[];
+}
+
+interface StoredEntry extends StoredPushSubscription {
+  readonly createdAt: string;
+  /** The paired device that subscribed. Older entries have none until the device reopens. */
+  readonly deviceId?: string;
 }
 
 function isVapidKeys(value: unknown): value is VapidKeys {
@@ -45,6 +51,9 @@ export class PushRegistry {
               typeof (entry as { createdAt?: unknown }).createdAt === "string"
                 ? (entry as { createdAt: string }).createdAt
                 : new Date().toISOString(),
+            ...(typeof (entry as { deviceId?: unknown }).deviceId === "string"
+              ? { deviceId: (entry as { deviceId: string }).deviceId }
+              : {}),
           })),
         };
         return;
@@ -64,7 +73,7 @@ export class PushRegistry {
     return this.loaded().subscriptions;
   }
 
-  async add(subscription: StoredPushSubscription): Promise<void> {
+  async add(subscription: StoredPushSubscription, deviceId?: string): Promise<void> {
     const current = this.loaded();
     const others = current.subscriptions.filter(
       (entry) => entry.endpoint !== subscription.endpoint,
@@ -75,6 +84,7 @@ export class PushRegistry {
         endpoint: subscription.endpoint,
         keys: { p256dh: subscription.keys.p256dh, auth: subscription.keys.auth },
         createdAt: new Date().toISOString(),
+        ...(deviceId ? { deviceId } : {}),
       },
     ].slice(-MAX_SUBSCRIPTIONS);
     this.data = { ...current, subscriptions: next };
@@ -84,6 +94,20 @@ export class PushRegistry {
   async remove(endpoint: string): Promise<void> {
     const current = this.loaded();
     const next = current.subscriptions.filter((entry) => entry.endpoint !== endpoint);
+    if (next.length === current.subscriptions.length) return;
+    this.data = { ...current, subscriptions: next };
+    await this.save();
+  }
+
+  /**
+   * Drops a revoked device's subscriptions, and any not yet tied to a device: a device still
+   * paired subscribes again the next time it opens pi-gui.
+   */
+  async removeDevice(deviceId: string): Promise<void> {
+    const current = this.loaded();
+    const next = current.subscriptions.filter(
+      (entry) => entry.deviceId !== undefined && entry.deviceId !== deviceId,
+    );
     if (next.length === current.subscriptions.length) return;
     this.data = { ...current, subscriptions: next };
     await this.save();
