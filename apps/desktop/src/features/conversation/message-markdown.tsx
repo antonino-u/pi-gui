@@ -1,6 +1,7 @@
-import { memo, useMemo } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { CheckIcon, CopyIcon } from "../../ui/icons";
 import {
   remarkWorkspaceFileLines,
   workspaceFileLineFromAnchorProps,
@@ -8,6 +9,60 @@ import {
 } from "./workspace-file-line";
 
 const REMARK_PLUGINS = [remarkGfm];
+const COPIED_MS = 1500;
+
+/** Writes text to the clipboard, falling back to a selection copy where the async API is missing. */
+async function copyText(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const field = document.createElement("textarea");
+  field.value = text;
+  field.setAttribute("readonly", "");
+  field.style.position = "fixed";
+  field.style.opacity = "0";
+  document.body.appendChild(field);
+  field.select();
+  const copied = document.execCommand("copy");
+  field.remove();
+  if (!copied) throw new Error("The clipboard is unavailable.");
+}
+
+/** A fenced code block with a button that copies its code. */
+function CodeBlock({ children }: { readonly children?: ReactNode }) {
+  const preRef = useRef<HTMLPreElement>(null);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), COPIED_MS);
+    return () => clearTimeout(timer);
+  }, [copied]);
+  const copy = () => {
+    const pre = preRef.current;
+    const text = pre?.querySelector("code")?.textContent ?? pre?.textContent ?? "";
+    copyText(text).then(
+      () => setCopied(true),
+      (error: unknown) => console.error("[renderer] copy code block failed", error),
+    );
+  };
+  return (
+    <div className="message__code-block">
+      <pre ref={preRef}>{children}</pre>
+      <button
+        aria-label={copied ? "Copied" : "Copy code"}
+        className="message__code-copy"
+        data-copied={copied ? "" : undefined}
+        data-testid="code-block-copy"
+        title={copied ? "Copied" : "Copy code"}
+        type="button"
+        onClick={copy}
+      >
+        {copied ? <CheckIcon /> : <CopyIcon />}
+      </button>
+    </div>
+  );
+}
 
 function markdownComponents(
   onOpenWorkspaceFileLine?: (target: WorkspaceFileLine) => void,
@@ -40,6 +95,7 @@ function markdownComponents(
         </a>
       );
     },
+    pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
     table: ({ children }) => (
       <div className="message__table-scroll">
         <table>{children}</table>

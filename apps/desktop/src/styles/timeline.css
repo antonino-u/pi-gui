@@ -846,6 +846,57 @@
   border: 1px solid var(--code-border);
 }
 
+.message__code-block {
+  position: relative;
+  min-width: 0;
+}
+
+/* Room for the copy button beside the first line. */
+.message__code-block > pre {
+  padding-right: 44px;
+}
+
+.message__code-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-md);
+  color: var(--muted);
+  background: var(--code-block-bg);
+  opacity: 0;
+  user-select: none;
+  transition:
+    opacity var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+.message__code-copy svg {
+  width: 15px;
+  height: 15px;
+}
+
+.message__code-block:hover .message__code-copy,
+.message__code-copy:focus-visible,
+.message__code-copy[data-copied] {
+  opacity: 1;
+}
+
+.message__code-copy:hover {
+  color: var(--text-strong);
+  background: var(--overlay-hover);
+}
+
+/* Touch screens have no hover, so the button stays visible. */
+@media (hover: none) {
+  .message__code-copy {
+    opacity: 1;
+  }
+}
+
 .message__content pre code {
   color: inherit;
   display: block;

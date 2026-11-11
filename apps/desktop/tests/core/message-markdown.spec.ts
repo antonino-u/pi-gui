@@ -99,6 +99,18 @@ test("renders markdown formatting in assistant responses", async () => {
       'const rendered: string = "markdown";',
     );
 
+    // The code block's copy button puts exactly its code on the clipboard.
+    const codeBlock = messageRow.locator(".message__code-block");
+    await codeBlock.hover();
+    const copyButton = codeBlock.getByRole("button", { name: "Copy code" });
+    await expect(copyButton).toBeVisible();
+    await copyButton.click();
+    await expect(codeBlock.getByRole("button", { name: "Copied" })).toBeVisible();
+    await expect
+      .poll(() => secondRun.electronApp.evaluate(({ clipboard }) => clipboard.readText()))
+      .toBe('const rendered: string = "markdown";');
+    await expect(codeBlock.getByRole("button", { name: "Copy code" })).toBeVisible();
+
     const issueLink = messageRow.getByRole("link", { name: "issue" });
     await expect(issueLink).toHaveAttribute(
       "href",
