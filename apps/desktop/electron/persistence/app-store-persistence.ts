@@ -12,6 +12,11 @@ import type {
   ThreadGrouping,
 } from "../../contracts/desktop-state";
 import { isThemeMode, isThemePresetId, isThreadGrouping } from "../../contracts/desktop-state";
+import {
+  decodeMutedSessions,
+  decodeNotificationPause,
+  decodeQuietHours,
+} from "../../contracts/notification-rules";
 import type { ExtensionFlagValues } from "@pi-gui/session-driver";
 import type { ModelSettingsSnapshot } from "@pi-gui/session-driver/runtime-types";
 import { readJsonWithBackup, writeFileAtomicQueued } from "./atomic-file-write";
@@ -288,11 +293,31 @@ function validateUiState(value: unknown): Record<string, unknown> {
       objectRecord(root.notificationPreferences) ?? fail("notificationPreferences");
     knownKeys(
       preferences,
-      ["backgroundCompletion", "backgroundFailure", "attentionNeeded"],
+      [
+        "backgroundCompletion",
+        "backgroundFailure",
+        "attentionNeeded",
+        "mutedSessions",
+        "pause",
+        "quietHours",
+      ],
       "notificationPreferences",
     );
     for (const key of ["backgroundCompletion", "backgroundFailure", "attentionNeeded"])
       optional(preferences, key, boolean, `notificationPreferences.${key}`);
+    optional(preferences, "mutedSessions", strings, "notificationPreferences.mutedSessions");
+    optional(
+      preferences,
+      "pause",
+      (v) => decodeNotificationPause(v) !== undefined,
+      "notificationPreferences.pause",
+    );
+    optional(
+      preferences,
+      "quietHours",
+      (v) => decodeQuietHours(v) !== undefined,
+      "notificationPreferences.quietHours",
+    );
   }
   if (root.appGlobalModelSettings !== undefined) {
     const settings = objectRecord(root.appGlobalModelSettings) ?? fail("appGlobalModelSettings");
@@ -804,8 +829,18 @@ function toNotificationPreferences(value: unknown): Partial<NotificationPreferen
     ...(typeof candidate.attentionNeeded === "boolean"
       ? { attentionNeeded: candidate.attentionNeeded }
       : {}),
+    ...optionalEntry("mutedSessions", decodeMutedSessions(candidate.mutedSessions)),
+    ...optionalEntry("pause", decodeNotificationPause(candidate.pause)),
+    ...optionalEntry("quietHours", decodeQuietHours(candidate.quietHours)),
   };
   return Object.keys(preferences).length > 0 ? preferences : undefined;
+}
+
+function optionalEntry<Key extends string, Value>(
+  key: Key,
+  value: Value | undefined,
+): Partial<Record<Key, Value>> {
+  return value === undefined ? {} : ({ [key]: value } as Record<Key, Value>);
 }
 
 function toStringRecord(value: unknown): Record<string, string> | undefined {

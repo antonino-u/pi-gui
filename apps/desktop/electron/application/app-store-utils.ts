@@ -126,6 +126,7 @@ export function buildWorkspaceRecords(
   lastViewedAtBySession: Map<string, string>,
   lastInteractedAtBySession: Map<string, string>,
   pinnedAtBySession: Map<string, string>,
+  mutedSessionKeys: ReadonlySet<string> = new Set(),
 ): WorkspaceRecord[] {
   const workspaceRoots = resolveWorkspaceRoots(workspaces, worktrees);
 
@@ -155,6 +156,7 @@ export function buildWorkspaceRecords(
             lastViewedAtBySession,
             lastInteractedAtBySession,
             pinnedAtBySession,
+            mutedSessionKeys,
           ),
         ),
     };
@@ -253,6 +255,7 @@ function buildSessionRecord(
   lastViewedAtBySession: Map<string, string>,
   lastInteractedAtBySession: Map<string, string>,
   pinnedAtBySession: Map<string, string>,
+  mutedSessionKeys: ReadonlySet<string>,
 ): SessionRecord {
   const key = sessionKey(session.sessionRef);
   const transcript = transcriptCache.get(key) ?? [];
@@ -265,6 +268,7 @@ function buildSessionRecord(
     title: session.title,
     updatedAt: session.updatedAt,
     pinnedAt,
+    ...(mutedSessionKeys.has(key) ? { notificationsMuted: true } : {}),
     lastViewedAt,
     lastInteractedAt,
     archivedAt: session.archivedAt,

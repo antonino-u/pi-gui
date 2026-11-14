@@ -1,15 +1,19 @@
 import type { DesktopNotificationPermissionStatus } from "../../../contracts/ipc";
-import type { NotificationPreferences } from "../../../contracts/desktop-state";
+import type {
+  NotificationPreferences,
+  NotificationPreferencesUpdate,
+} from "../../../contracts/desktop-state";
 import { useTranslation, type Translate } from "../../i18n";
 import { hasHostScreen } from "../../lib/surface";
 import { SettingsSwitch } from "./settings-controls";
+import { SettingsNotificationSchedule } from "./settings-notification-schedule";
 import { SettingsGroup, SettingsRow } from "./settings-utils";
 
 interface SettingsNotificationsSectionProps {
   readonly notificationPreferences: NotificationPreferences;
   readonly notificationPermissionStatus: DesktopNotificationPermissionStatus;
   readonly notificationPermissionPending: boolean;
-  readonly onSetNotificationPreferences: (preferences: Partial<NotificationPreferences>) => void;
+  readonly onSetNotificationPreferences: (preferences: NotificationPreferencesUpdate) => void;
   readonly onRequestNotificationPermission: () => void;
   readonly onOpenSystemNotificationSettings: () => void;
 }
@@ -93,6 +97,11 @@ export function SettingsNotificationsSection({
           </SettingsRow>
         ) : null}
       </SettingsGroup>
+
+      <SettingsNotificationSchedule
+        preferences={notificationPreferences}
+        onSetNotificationPreferences={onSetNotificationPreferences}
+      />
 
       <SettingsGroup
         title={t("settings.notifications.groupInApp")}

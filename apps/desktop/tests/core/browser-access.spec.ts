@@ -412,6 +412,17 @@ test("a browser tab drives pi-gui through its own window view", async () => {
       await expect.poll(notificationCount).toBe(before + 2);
     });
 
+    await test.step("a thread muted from the browser sends no push until unmuted", async () => {
+      const before = await notificationCount();
+      await secondTabRequest("call", "setSessionNotificationsMuted", [desktopRef, true]);
+      await promptOnDesktop("Muted desktop prompt");
+      await secondTabRequest("call", "setSessionNotificationsMuted", [desktopRef, false]);
+      await promptOnDesktop("Unmuted desktop prompt");
+      // Pushes go out in order, so the third arriving after the unmute proves the muted one was skipped.
+      await expect.poll(() => pushService.received.length).toBe(3);
+      await expect.poll(notificationCount).toBe(before + 1);
+    });
+
     await test.step("Settings pairs a device with a one-time code and revokes one", async () => {
       await desktop.evaluate(() => globalThis.window.piApp.setActiveView("settings"));
       await desktop.getByRole("button", { name: "Browser access" }).click();

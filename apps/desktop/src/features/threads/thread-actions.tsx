@@ -8,6 +8,8 @@ import {
   CopyIcon,
   PencilIcon,
   PinIcon,
+  BellIcon,
+  BellOffIcon,
   RestoreIcon,
 } from "../../ui/icons";
 
@@ -19,6 +21,7 @@ import {
 export type ThreadActionId =
   | "rename-thread"
   | "pin-thread"
+  | "mute-thread"
   | "archive-thread"
   | "restore-thread"
   | "mark-read"
@@ -44,6 +47,7 @@ export interface ThreadActionHandlers {
   readonly hasScheduledTask: (subject: ThreadActionSubject) => boolean;
   readonly startRename: (subject: ThreadActionSubject) => void;
   readonly setPinned: (subject: ThreadActionSubject, pinned: boolean) => void;
+  readonly setNotificationsMuted: (subject: ThreadActionSubject, muted: boolean) => void;
   readonly archive: (subject: ThreadActionSubject) => void;
   readonly restore: (subject: ThreadActionSubject) => void;
   readonly markRead: (subject: ThreadActionSubject) => void;
@@ -66,6 +70,7 @@ export function buildThreadActions(
   const { session } = subject;
   const archived = Boolean(session.archivedAt);
   const pinned = Boolean(session.pinnedAt);
+  const muted = Boolean(session.notificationsMuted);
   const actions: ThreadAction[] = [
     {
       id: "rename-thread",
@@ -89,6 +94,12 @@ export function buildThreadActions(
         title: pinned ? "Unpin thread" : "Pin thread",
         icon: <PinIcon filled={pinned} />,
         run: () => handlers.setPinned(subject, !pinned),
+      },
+      {
+        id: "mute-thread",
+        title: muted ? "Unmute notifications" : "Mute notifications",
+        icon: muted ? <BellIcon /> : <BellOffIcon />,
+        run: () => handlers.setNotificationsMuted(subject, !muted),
       },
       {
         id: "archive-thread",

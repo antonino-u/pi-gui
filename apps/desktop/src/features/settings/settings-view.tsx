@@ -8,6 +8,7 @@ import type {
   NotificationPreferences,
   ThemePresetId,
   WorkspaceRecord,
+  NotificationPreferencesUpdate,
 } from "../../../contracts/desktop-state";
 import type {
   CustomProviderConfig,
@@ -55,7 +56,7 @@ interface SettingsViewProps {
   readonly onRemoveProviderApiKey: (providerId: string) => Promise<string | undefined>;
   readonly onSaveCustomProvider: (config: CustomProviderConfig) => Promise<string | undefined>;
   readonly onDeleteCustomProvider: (providerId: string) => Promise<string | undefined>;
-  readonly onSetNotificationPreferences: (preferences: Partial<NotificationPreferences>) => void;
+  readonly onSetNotificationPreferences: (preferences: NotificationPreferencesUpdate) => void;
   readonly onSetIntegratedTerminalShell: (shellPath: string) => void;
   readonly onRequestNotificationPermission: () => void;
   readonly onOpenSystemNotificationSettings: () => void;

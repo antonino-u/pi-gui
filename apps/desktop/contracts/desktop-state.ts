@@ -68,7 +68,43 @@ export interface NotificationPreferences {
   readonly backgroundCompletion: boolean;
   readonly backgroundFailure: boolean;
   readonly attentionNeeded: boolean;
+  /** Threads that never notify, as `workspaceId:sessionId` keys. */
+  readonly mutedSessions: readonly string[];
+  /** All notifications are off until `until` (an ISO time), or until turned back on (null). */
+  readonly pause: NotificationPause | null;
+  readonly quietHours: QuietHours;
 }
+
+/**
+ * A change to notification preferences. Quiet hours change one field at a time, so two quick
+ * edits (start, then end) cannot undo each other.
+ */
+export type NotificationPreferencesUpdate = Partial<
+  Omit<NotificationPreferences, "quietHours" | "mutedSessions">
+> & { readonly quietHours?: Partial<QuietHours> };
+
+export interface NotificationPause {
+  readonly until: string | null;
+}
+
+/**
+ * Hours in which background updates do not notify. Times are `HH:MM` in this computer's time
+ * zone; an `end` before `start` runs past midnight, and belongs to the day it starts on.
+ */
+export interface QuietHours {
+  readonly enabled: boolean;
+  readonly start: string;
+  readonly end: string;
+  /** Days the quiet hours start on: 0 is Sunday. */
+  readonly days: readonly number[];
+}
+
+export const DEFAULT_QUIET_HOURS: QuietHours = {
+  enabled: false,
+  start: "22:00",
+  end: "08:00",
+  days: [0, 1, 2, 3, 4, 5, 6],
+};
 
 export interface ComposerImageAttachment {
   readonly id: string;
@@ -112,6 +148,8 @@ export interface SessionRecord {
   readonly status: SessionStatus;
   readonly runningSince?: string;
   readonly hasUnseenUpdate: boolean;
+  /** The thread never notifies (Mute notifications in its menu). */
+  readonly notificationsMuted?: boolean;
   readonly config?: SessionConfig;
 }
 
@@ -555,6 +593,9 @@ export function createEmptyDesktopAppState(): DesktopAppState {
       backgroundCompletion: true,
       backgroundFailure: true,
       attentionNeeded: true,
+      mutedSessions: [],
+      pause: null,
+      quietHours: DEFAULT_QUIET_HOURS,
     },
     integratedTerminalShell: "",
     lastViewedAtBySession: {},

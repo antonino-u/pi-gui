@@ -1,4 +1,5 @@
 import { JsonCatalogStore } from "@pi-gui/catalogs/node";
+import { withSessionMuted } from "../../contracts/notification-rules";
 import { sessionKey } from "@pi-gui/session-driver";
 import type { ExtensionFlagValues, SessionSchemaInfo } from "@pi-gui/session-driver";
 import type { BrowserWindow } from "electron";
@@ -73,6 +74,7 @@ import {
   type CreateScheduledTaskInput,
   type ScheduledTaskRecord,
   type UpdateScheduledTaskInput,
+  type NotificationPreferencesUpdate,
 } from "../../contracts/desktop-state";
 import {
   applyTimelineEvent,
@@ -1037,6 +1039,43 @@ export class DesktopAppStore {
     return this.emit();
   }
 
+  /** Mutes or unmutes one thread's notifications, on the Mac and on paired browsers alike. */
+  async setSessionNotificationsMuted(
+    target: WorkspaceSessionTarget,
+    muted: boolean,
+  ): Promise<DesktopAppState> {
+    await this.initialize();
+    const sessionRef = toSessionRef(target);
+    if (!this.sessionFromState(sessionRef)) {
+      return this.withError(`Unknown session: ${target.workspaceId}:${target.sessionId}`);
+    }
+    const mutedSessions = withSessionMuted(
+      this.state.notificationPreferences.mutedSessions,
+      sessionKey(sessionRef),
+      muted,
+    );
+    this.state = {
+      ...this.state,
+      notificationPreferences: { ...this.state.notificationPreferences, mutedSessions },
+      workspaces: this.state.workspaces.map((workspaceEntry) =>
+        workspaceEntry.id === target.workspaceId
+          ? {
+              ...workspaceEntry,
+              sessions: workspaceEntry.sessions.map((entry) =>
+                entry.id === target.sessionId
+                  ? { ...entry, notificationsMuted: muted || undefined }
+                  : entry,
+              ),
+            }
+          : workspaceEntry,
+      ),
+      lastError: undefined,
+      revision: this.state.revision + 1,
+    };
+    await this.persistUiState();
+    return this.emit();
+  }
+
   async setSessionPinned(
     target: WorkspaceSessionTarget,
     pinned: boolean,
@@ -1419,14 +1458,17 @@ export class DesktopAppStore {
   }
 
   async setNotificationPreferences(
-    preferences: Partial<NotificationPreferences>,
+    preferences: NotificationPreferencesUpdate,
   ): Promise<DesktopAppState> {
     await this.initialize();
+    const current = this.state.notificationPreferences;
+    const { quietHours, ...rest } = preferences;
     this.state = {
       ...this.state,
       notificationPreferences: {
-        ...this.state.notificationPreferences,
-        ...preferences,
+        ...current,
+        ...rest,
+        quietHours: { ...current.quietHours, ...quietHours },
       },
       lastError: undefined,
       revision: this.state.revision + 1,
@@ -2454,6 +2496,7 @@ export class DesktopAppStore {
         this.sessionState.lastViewedAtBySession,
         this.sessionState.lastInteractedAtBySession,
         this.sessionState.pinnedAtBySession,
+        new Set(this.state.notificationPreferences.mutedSessions),
       );
       const worktreesByWorkspace = buildWorktreeRecords(
         workspacesSnapshot.workspaces,

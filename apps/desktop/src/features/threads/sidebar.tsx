@@ -50,6 +50,7 @@ import {
   SettingsIcon,
   SkillIcon,
   ClockIcon,
+  BellOffIcon,
   WorktreeIcon,
 } from "../../ui/icons";
 import {
@@ -1710,6 +1711,15 @@ const ThreadSessionRow = forwardRef<HTMLDivElement, ThreadSessionRowProps>(
             </span>
           </button>
           <span className="session-row__trailing">
+            {thread.session.notificationsMuted ? (
+              <span
+                className="session-row__workspace-icon"
+                data-testid="session-row-muted"
+                title="Notifications muted"
+              >
+                <BellOffIcon />
+              </span>
+            ) : null}
             {thread.environment.kind === "worktree" ? (
               <span className="session-row__workspace-icon" aria-hidden="true" title="Worktree">
                 <WorktreeIcon />

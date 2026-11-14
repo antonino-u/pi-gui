@@ -25,6 +25,7 @@ import {
   type ThreadGrouping,
   type WorkspaceSessionTarget,
   isThreadGrouping,
+  type NotificationPreferencesUpdate,
 } from "../../contracts/desktop-state";
 import type {
   CustomProviderConfig,
@@ -40,6 +41,10 @@ import {
   type UpdateScheduledTaskInput,
 } from "../../contracts/scheduled-tasks";
 import { assertComposerAttachmentsAccepted } from "../../contracts/composer-attachments";
+import {
+  decodeNotificationPause,
+  decodeQuietHoursChange,
+} from "../../contracts/notification-rules";
 import {
   decodeTaskWorkbenchTemplate,
   type SaveTaskWorkbenchTemplateInput,
@@ -319,14 +324,31 @@ export function expectSetChildSupervisionLoopInput(value: unknown): SetChildSupe
   };
 }
 
-export function expectNotificationPreferences(value: unknown): Partial<NotificationPreferences> {
+export function expectNotificationPreferences(value: unknown): NotificationPreferencesUpdate {
   const record = expectRecord(value, "preferences");
-  let preferences: Partial<NotificationPreferences> = {};
+  let preferences: NotificationPreferencesUpdate = {};
   for (const key of ["backgroundCompletion", "backgroundFailure", "attentionNeeded"] as const) {
     if (Object.hasOwn(record, key)) {
       preferences = { ...preferences, [key]: expectBoolean(record[key], `preferences.${key}`) };
     }
   }
+  if (Object.hasOwn(record, "pause")) {
+    const pause = decodeNotificationPause(record.pause);
+    if (pause === undefined) {
+      throw new TypeError("preferences.pause must be null or { until: string | null }");
+    }
+    preferences = { ...preferences, pause };
+  }
+  if (Object.hasOwn(record, "quietHours")) {
+    const quietHours = decodeQuietHoursChange(record.quietHours);
+    if (!quietHours) {
+      throw new TypeError(
+        "preferences.quietHours may set enabled, HH:MM start and end, and days from 0 to 6",
+      );
+    }
+    preferences = { ...preferences, quietHours };
+  }
+  // Muting one thread has its own request, so two devices muting at once cannot collide.
   return preferences;
 }
 

@@ -55,6 +55,7 @@ export const browserAccessPolicy = {
   unarchiveSession: "call",
   markSessionRead: "call",
   setSessionPinned: "call",
+  setSessionNotificationsMuted: "call",
   createSession: "call",
   startThread: "call",
   forkThread: "call",
