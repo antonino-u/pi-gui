@@ -456,6 +456,9 @@ test("preserves durable ui state when one startup workspace is unavailable", asy
       backgroundCompletion: false,
       backgroundFailure: true,
       attentionNeeded: false,
+      mutedSessions: [sessionKey],
+      pause: null,
+      quietHours: { enabled: true, start: "21:30", end: "07:00", days: [1, 2, 3, 4, 5] },
     },
     integratedTerminalShell: "/bin/zsh",
     pinnedAtBySession: {
@@ -483,11 +486,7 @@ test("preserves durable ui state when one startup workspace is unavailable", asy
     expect(state.composerDraft).toBe("draft survives unavailable workspace");
     expect(state.workspaceOrder).toEqual([unavailableWorkspaceId, healthyWorkspaceId]);
     expect(state.pinnedSessionOrder).toEqual([`${unavailableWorkspaceId}:${unavailableSessionId}`]);
-    expect(state.notificationPreferences).toEqual({
-      backgroundCompletion: false,
-      backgroundFailure: true,
-      attentionNeeded: false,
-    });
+    expect(state.notificationPreferences).toEqual(beforeFailure.notificationPreferences);
     expect(state.integratedTerminalShell).toBe("/bin/zsh");
     expect(state.themePresetId).toBe("github");
     expect(state.sidebarCollapsed).toBe(true);

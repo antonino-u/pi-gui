@@ -104,6 +104,7 @@ type ConversationOwner = Pick<
   | "unarchiveSession"
   | "markSessionRead"
   | "setSessionPinned"
+  | "setSessionNotificationsMuted"
   | "createSession"
   | "startThread"
   | "forkThread"
@@ -421,6 +422,17 @@ export function registerDesktopIpc({
     // Pin metadata has an explicit target and must not wait for an active prompt to finish.
     return immediate(event, () => owners.conversation.setSessionPinned(target, pinned));
   });
+  ipcMain.handle(
+    desktopIpc.setSessionNotificationsMuted,
+    (event, rawTarget: unknown, rawMuted: unknown) => {
+      const target = expectSessionTarget(rawTarget);
+      const muted = expectBoolean(rawMuted, "muted");
+      // Like pinning: an explicit target that must not wait for an active prompt to finish.
+      return immediate(event, () =>
+        owners.conversation.setSessionNotificationsMuted(target, muted),
+      );
+    },
+  );
   ipcMain.handle(desktopIpc.setActiveView, (event, rawView: unknown) => {
     const view = expectAppView(rawView);
     return run(event, () => owners.state.setActiveView(view));

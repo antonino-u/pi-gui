@@ -7,7 +7,12 @@ import {
   type SetStateAction,
 } from "react";
 import type { RuntimeSnapshot } from "@pi-gui/session-driver/runtime-types";
-import type { AppView, DesktopAppState, WorkspaceRecord } from "../../contracts/desktop-state";
+import type {
+  AppView,
+  DesktopAppState,
+  NotificationPreferencesUpdate,
+  WorkspaceRecord,
+} from "../../contracts/desktop-state";
 import { updateSnapshot } from "./desktop-app-state";
 import { getEffectiveModelRuntime } from "../features/settings/model-settings";
 import {
@@ -321,9 +326,7 @@ export function SecondarySurfaces({
     );
   };
 
-  const handleSetNotificationPreferences = (
-    preferences: Partial<DesktopAppState["notificationPreferences"]>,
-  ) => {
+  const handleSetNotificationPreferences = (preferences: NotificationPreferencesUpdate) => {
     void updateSnapshot(setSnapshot, () => api.setNotificationPreferences(preferences)).catch(
       (error: unknown) => {
         console.error("[renderer] setNotificationPreferences failed", error);

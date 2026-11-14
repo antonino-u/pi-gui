@@ -75,6 +75,7 @@ import type {
   WorkspaceSessionTarget,
   CreateScheduledTaskInput,
   UpdateScheduledTaskInput,
+  NotificationPreferencesUpdate,
 } from "../contracts/desktop-state";
 
 const devReloadMarkersEnabled = process.env.PI_APP_DEV_RELOAD_MARKERS === "1";
@@ -276,6 +277,12 @@ contextBridge.exposeInMainWorld("piApp", {
     ipcRenderer.invoke(desktopIpc.markSessionRead, target) as Promise<DesktopAppState>,
   setSessionPinned: (target: WorkspaceSessionTarget, pinned: boolean) =>
     ipcRenderer.invoke(desktopIpc.setSessionPinned, target, pinned) as Promise<DesktopAppState>,
+  setSessionNotificationsMuted: (target: WorkspaceSessionTarget, muted: boolean) =>
+    ipcRenderer.invoke(
+      desktopIpc.setSessionNotificationsMuted,
+      target,
+      muted,
+    ) as Promise<DesktopAppState>,
   createSession: (input: CreateSessionInput) =>
     ipcRenderer.invoke(desktopIpc.createSession, input) as Promise<DesktopAppState>,
   startThread: (input: StartThreadInput) =>
@@ -443,7 +450,7 @@ contextBridge.exposeInMainWorld("piApp", {
       sessionId,
       response,
     ) as Promise<DesktopAppState>,
-  setNotificationPreferences: (preferences: Partial<NotificationPreferences>) =>
+  setNotificationPreferences: (preferences: NotificationPreferencesUpdate) =>
     ipcRenderer.invoke(
       desktopIpc.setNotificationPreferences,
       preferences,

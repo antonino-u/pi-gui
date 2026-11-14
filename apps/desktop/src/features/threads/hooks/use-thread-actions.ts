@@ -130,6 +130,8 @@ export function useThreadActions({
       setRenameDraft(subject.session.title);
     },
     setPinned: (subject, pinned) => setPinned(targetFor(subject), pinned),
+    setNotificationsMuted: (subject, muted) =>
+      mutate((desktopApi) => desktopApi.setSessionNotificationsMuted(targetFor(subject), muted)),
     archive: (subject) => archive(targetFor(subject)),
     restore: (subject) => restore(targetFor(subject)),
     markRead: (subject) => mutate((desktopApi) => desktopApi.markSessionRead(targetFor(subject))),

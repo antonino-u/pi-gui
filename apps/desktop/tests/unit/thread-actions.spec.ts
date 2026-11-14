@@ -31,6 +31,7 @@ function handlers(
     hasScheduledTask: () => scheduled,
     startRename: record("rename"),
     setPinned: (_subject, pinned) => calls.push(`pin:${pinned}`),
+    setNotificationsMuted: (_subject, muted) => calls.push(`mute:${muted}`),
     archive: record("archive"),
     restore: record("restore"),
     markRead: record("mark-read"),
@@ -48,6 +49,7 @@ test("an open thread lists rename, pin, archive, scheduled task and copy with sh
   expect(titles(actions)).toEqual([
     "Rename thread",
     "Pin thread",
+    "Mute notifications",
     "Archive thread",
     "Add scheduled task…",
     "Copy session ID",
@@ -61,19 +63,24 @@ test("an open thread lists rename, pin, archive, scheduled task and copy with sh
 test("state changes the list: pinned, unseen, scheduled and archived threads", () => {
   const recorder = handlers("linux", true);
   const actions = buildThreadActions(
-    { workspaceId: "ws", session: session({ pinnedAt: "x", hasUnseenUpdate: true }) },
+    {
+      workspaceId: "ws",
+      session: session({ pinnedAt: "x", hasUnseenUpdate: true, notificationsMuted: true }),
+    },
     recorder,
   );
   expect(titles(actions)).toEqual([
     "Rename thread",
     "Unpin thread",
+    "Unmute notifications",
     "Archive thread",
     "Mark as read",
     "Edit scheduled task…",
     "Copy session ID",
   ]);
   actions.find((action) => action.id === "pin-thread")?.run();
-  expect(recorder.calls).toEqual(["pin:false"]);
+  actions.find((action) => action.id === "mute-thread")?.run();
+  expect(recorder.calls).toEqual(["pin:false", "mute:false"]);
 
   const archived = buildThreadActions(
     { workspaceId: "ws", session: session({ archivedAt: "x" }) },

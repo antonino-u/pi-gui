@@ -50,6 +50,7 @@ import type {
   WorkspaceSessionTarget,
   CreateScheduledTaskInput,
   UpdateScheduledTaskInput,
+  NotificationPreferencesUpdate,
 } from "./desktop-state";
 
 export type DesktopNotificationPermissionStatus =
@@ -149,6 +150,7 @@ export const desktopIpc = {
   unarchiveSession: "pi-gui:unarchive-session",
   markSessionRead: "pi-gui:mark-session-read",
   setSessionPinned: "pi-gui:set-session-pinned",
+  setSessionNotificationsMuted: "pi-gui:set-session-notifications-muted",
   createSession: "pi-gui:create-session",
   startThread: "pi-gui:start-thread",
   forkThread: "pi-gui:fork-thread",
@@ -760,6 +762,10 @@ export interface PiDesktopApi {
   unarchiveSession(target: WorkspaceSessionTarget): Promise<DesktopAppState>;
   markSessionRead(target: WorkspaceSessionTarget): Promise<DesktopAppState>;
   setSessionPinned(target: WorkspaceSessionTarget, pinned: boolean): Promise<DesktopAppState>;
+  setSessionNotificationsMuted(
+    target: WorkspaceSessionTarget,
+    muted: boolean,
+  ): Promise<DesktopAppState>;
   createSession(input: CreateSessionInput): Promise<DesktopAppState>;
   startThread(input: StartThreadInput): Promise<DesktopAppState>;
   forkThread(input: ForkThreadInput): Promise<DesktopAppState>;
@@ -836,9 +842,7 @@ export interface PiDesktopApi {
       | { readonly requestId: string; readonly confirmed: boolean }
       | { readonly requestId: string; readonly cancelled: true },
   ): Promise<DesktopAppState>;
-  setNotificationPreferences(
-    preferences: Partial<NotificationPreferences>,
-  ): Promise<DesktopAppState>;
+  setNotificationPreferences(preferences: NotificationPreferencesUpdate): Promise<DesktopAppState>;
   setIntegratedTerminalShell(shell: string): Promise<DesktopAppState>;
   setEnableTransparency(enabled: boolean): Promise<DesktopAppState>;
   setThemePresetId(presetId: ThemePresetId): Promise<DesktopAppState>;

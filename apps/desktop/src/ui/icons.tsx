@@ -679,6 +679,25 @@ export function BellIcon() {
   );
 }
 
+export function BellOffIcon() {
+  return (
+    <Icon>
+      <path
+        d="M5.6 13.6V9.2a4.4 4.4 0 0 1 8.8 0v4.4l1.1 1.4H4.5l1.1-1.4Z"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.35"
+      />
+      <path
+        d="M8.4 16.6a1.7 1.7 0 0 0 3.2 0M3.5 3.5l13 13"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.35"
+      />
+    </Icon>
+  );
+}
+
 export function KeyboardIcon() {
   return (
     <Icon>

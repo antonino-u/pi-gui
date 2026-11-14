@@ -8,6 +8,7 @@ import { sessionKey } from "@pi-gui/session-driver";
 import type { SessionDriverEvent, SessionRef } from "@pi-gui/session-driver";
 import { getSelectedSession } from "../../contracts/desktop-state";
 import { isSessionActivelyViewed } from "../conversation/session-visibility";
+import { notificationSilence } from "../../contracts/notification-rules";
 
 const MAX_COMPLETED_RUN_KEYS = 500;
 // An extension that throws on a frequent event repeats the same error notice; notify once per window.
@@ -207,6 +208,15 @@ export class NotificationManager {
     }
 
     const preferences = this.latestState?.notificationPreferences;
+    const kind =
+      event.type === "runCompleted"
+        ? "completion"
+        : event.type === "runFailed"
+          ? "failure"
+          : "attention";
+    if (preferences && notificationSilence(preferences, sessionKey(event.sessionRef), kind)) {
+      return false;
+    }
     if (event.type === "runCompleted" && preferences && !preferences.backgroundCompletion) {
       return false;
     }

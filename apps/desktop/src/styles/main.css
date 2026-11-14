@@ -3451,3 +3451,50 @@ mark.thread-find-active {
   border: 1px solid var(--border-default);
   color: var(--muted-soft);
 }
+
+/* Settings > Notifications: quiet hours times and days. */
+.notification-quiet-hours {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px 14px;
+}
+
+.notification-quiet-hours__time {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted-soft);
+  font-size: 12.5px;
+}
+
+.notification-quiet-hours__time input {
+  min-height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.notification-quiet-hours__days {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.notification-quiet-hours__day {
+  min-width: 34px;
+  min-height: 28px;
+  padding: 0 6px;
+  border-radius: var(--radius-md);
+  color: var(--muted-soft);
+  font-size: 12px;
+}
+
+.notification-quiet-hours__day[aria-pressed="true"] {
+  background: var(--overlay-active);
+  color: var(--text-strong);
+}

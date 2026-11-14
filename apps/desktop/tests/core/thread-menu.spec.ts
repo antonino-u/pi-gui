@@ -87,6 +87,7 @@ test("right-click thread menu supports rename, archive/restore, mark read, and c
     expect(await menuItemTitles(menu)).toEqual([
       "Rename thread",
       "Pin thread",
+      "Mute notifications",
       "Archive thread",
       "Mark as read",
       "Add scheduled task…",
