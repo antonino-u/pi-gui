@@ -159,20 +159,23 @@ test("a pairing code works once, and revoking a device unpairs only that device"
     expect(pairing.qrSvg).toMatch(/^<svg [^>]*viewBox="0 0 \d+ \d+"/);
     expect(pairing.url).toContain(`/__pi-browser/pair?code=${pairing.code}`);
 
-    const wrong = await get(server.port, "/__pi-browser/pair?code=AAAAAAAA", ca);
+    const wrong = await get(server.port, "/__pi-browser/pair?code=AAAAAAAA&confirm=1", ca);
     expect(wrong.status).toBe(403);
     expect(wrong.body).toContain("not valid or has expired");
-    // Case, spaces and dashes in a typed code do not matter.
-    const typed = `${pairing.code.slice(0, 4).toLowerCase()}-${pairing.code.slice(4)}`;
-    const first = await get(
-      server.port,
-      `/__pi-browser/pair?code=${encodeURIComponent(typed)}`,
-      ca,
-    );
-    expect(first.status).toBe(302);
-    const reused = await get(server.port, `/__pi-browser/pair?code=${pairing.code}`, ca);
-    expect(reused.status).toBe(403);
 
+    // Opening the scanned link only shows the page with the code filled in.
+    const opened = await get(server.port, `/__pi-browser/pair?code=${pairing.code}`, ca);
+    expect(opened.status).toBe(200);
+    expect(opened.headers["set-cookie"]).toBeUndefined();
+    expect(opened.body).toContain(`value="${pairing.code}"`);
+    expect(server.status()).toMatchObject({ devices: [] });
+
+    // Tapping the button pairs. Case, spaces and dashes in a typed code do not matter.
+    const typed = `${pairing.code.slice(0, 4).toLowerCase()}-${pairing.code.slice(4)}`;
+    const confirm = (entered: string) =>
+      get(server.port, `/__pi-browser/pair?code=${encodeURIComponent(entered)}&confirm=1`, ca);
+    const first = await confirm(typed);
+    expect(first.status).toBe(302);
     const second = await get(server.port, pathOf(server.pairingUrls()[0]), ca);
     const status = server.status();
     if (!status.enabled) throw new Error("Browser access should be on");
@@ -211,6 +214,51 @@ test("a browser paired before devices had their own keys stays paired", async ()
     });
     // The reusable link no longer carries that device's key.
     expect(server.pairingUrls()[0]).not.toContain(legacyToken);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("a stable host name leads the addresses and pairing links", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pi-browser-access-named-"));
+  const ca = await readFile(join(fixtures, "cert.pem"));
+  const server = new BrowserAccessServer({
+    host: "127.0.0.1",
+    port: 0,
+    extraHostnames: ["studio.local"],
+    tokenFile: join(directory, "browser-access.json"),
+    devicesFile: join(directory, "browser-devices.json"),
+    pushFile: join(directory, "browser-push.json"),
+    scriptsDir: directory,
+    pushContact: "mailto:someone@example.net",
+    tls: { cert: ca, key: await readFile(join(fixtures, "key.pem")) },
+    renderer: { kind: "directory", root: directory },
+    openBridgeWindow: () => {
+      throw new Error("No browser tab connects in this test.");
+    },
+  });
+  await server.start();
+  try {
+    expect(server.addresses()).toEqual([
+      `https://studio.local:${server.port}`,
+      `https://127.0.0.1:${server.port}`,
+    ]);
+    expect(server.createPairingCode().url).toMatch(
+      /^https:\/\/studio\.local:\d+\/__pi-browser\/pair\?code=/,
+    );
+  } finally {
+    await server.stop();
+  }
+});
+
+test("one code pairs a scanner's browser, Safari and a Home Screen app, then is used up", async () => {
+  const { server, ca } = await startServer();
+  try {
+    const { code } = server.createPairingCode();
+    const confirm = () => get(server.port, `/__pi-browser/pair?code=${code}&confirm=1`, ca);
+    for (let use = 1; use <= 4; use += 1) expect((await confirm()).status).toBe(302);
+    expect((await confirm()).status).toBe(403);
+    expect(server.status()).toMatchObject({ devices: [{}, {}, {}, {}] });
   } finally {
     await server.stop();
   }

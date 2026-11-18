@@ -11,6 +11,8 @@ import { SettingsGroup, SettingsRow } from "./settings-utils";
 
 /** How often the page refreshes which devices are connected while it is open. */
 const REFRESH_MS = 5_000;
+/** Faster while a code is showing, so a device appears as soon as it pairs. */
+const PAIRING_REFRESH_MS = 1_000;
 
 function formatCode(code: string): string {
   return `${code.slice(0, 4)} ${code.slice(4)}`;
@@ -57,11 +59,12 @@ export function SettingsBrowserAccessSection() {
     run(() => api.getBrowserAccessStatus(), setStatus);
   }, [api, run]);
 
+  const showingCode = pairing !== null && Date.parse(pairing.expiresAt) > now;
   useEffect(() => {
     refresh();
-    const timer = setInterval(refresh, REFRESH_MS);
+    const timer = setInterval(refresh, showingCode ? PAIRING_REFRESH_MS : REFRESH_MS);
     return () => clearInterval(timer);
-  }, [refresh]);
+  }, [refresh, showingCode]);
 
   if (!api || !status) return null;
 

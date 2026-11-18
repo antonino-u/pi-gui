@@ -435,14 +435,14 @@ test("a browser tab drives pi-gui through its own window view", async () => {
       expect(code).toMatch(/^[A-HJKMNP-Z2-9]{8}$/);
       await expect(desktop.locator(".browser-access-pairing__qr")).toBeVisible();
 
-      const paired = await fetch(`${origin}/__pi-browser/pair?code=${code}`, {
+      const opened = await fetch(`${origin}/__pi-browser/pair?code=${code}`, {
+        redirect: "manual",
+      });
+      expect(opened.status).toBe(200);
+      const paired = await fetch(`${origin}/__pi-browser/pair?code=${code}&confirm=1`, {
         redirect: "manual",
       });
       expect(paired.status).toBe(302);
-      const reused = await fetch(`${origin}/__pi-browser/pair?code=${code}`, {
-        redirect: "manual",
-      });
-      expect(reused.status).toBe(403);
       await expect(desktop.getByTestId("browser-access-revoke")).toHaveCount(2);
 
       // Revoke the device whose tab is open: the tab leaves for the pairing page.

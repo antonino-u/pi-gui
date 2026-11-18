@@ -12,6 +12,12 @@ const MAX_FAILED_CODES = 10;
 /** How often a device's last-seen time is written, at most. */
 const LAST_SEEN_WRITE_MS = 60_000;
 const MAX_DEVICES = 50;
+/**
+ * Browsers a code pairs before it is used up. A phone often opens a scanned link in the
+ * scanner's own browser first, then in Safari, then in its Home Screen app, and each keeps
+ * its own cookies, so one code has to pair all three within its five minutes.
+ */
+export const PAIRING_CODE_USES = 4;
 
 interface StoredDevice {
   readonly id: string;
@@ -29,12 +35,17 @@ interface DevicesFile {
 interface PendingCode {
   readonly code: string;
   readonly expiresAt: number;
+  uses: number;
 }
 
 export interface PairedDevice {
   readonly id: string;
   /** The device's own secret, for its cookie and its Home Screen start URL. */
   readonly token: string;
+}
+
+function normalizeCode(entered: string): string {
+  return entered.toUpperCase().replace(/[\s-]/g, "");
 }
 
 function hashToken(token: string): string {
@@ -192,18 +203,31 @@ export class DeviceRegistry {
     for (let index = 0; index < CODE_LENGTH; index += 1) {
       code += CODE_ALPHABET[randomInt(CODE_ALPHABET.length)];
     }
-    const pending = { code, expiresAt: now + PAIRING_CODE_TTL_MS };
+    const pending: PendingCode = { code, expiresAt: now + PAIRING_CODE_TTL_MS, uses: 0 };
     this.codes.push(pending);
     return pending;
   }
 
-  /** Uses up a pairing code. Spaces, dashes and letter case are ignored. */
+  /** Whether a code would pair a browser now, without using it. */
+  isValidCode(entered: string, now: number = Date.now()): boolean {
+    this.dropExpiredCodes(now);
+    const normalized = normalizeCode(entered);
+    return this.codes.some((pending) => secretsEqual(normalized, pending.code));
+  }
+
+  /**
+   * Uses a pairing code to pair one browser. A code pairs up to `PAIRING_CODE_USES` browsers
+   * before it expires. Spaces, dashes and letter case are ignored.
+   */
   consumeCode(entered: string, now: number = Date.now()): boolean {
     this.dropExpiredCodes(now);
-    const normalized = entered.toUpperCase().replace(/[\s-]/g, "");
+    const normalized = normalizeCode(entered);
     const match = this.codes.find((pending) => secretsEqual(normalized, pending.code));
     if (match) {
-      this.codes = this.codes.filter((pending) => pending !== match);
+      match.uses += 1;
+      if (match.uses >= PAIRING_CODE_USES) {
+        this.codes = this.codes.filter((pending) => pending !== match);
+      }
       return true;
     }
     if (this.codes.length > 0) {

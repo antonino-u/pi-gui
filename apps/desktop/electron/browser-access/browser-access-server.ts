@@ -197,7 +197,20 @@ export class BrowserAccessServer {
   }
 
   /** Addresses browsers can open, one per network interface. */
+  /**
+   * Addresses browsers can open: the extra hostnames first (a name such as `mac.local` stays
+   * the same on every network, so a Home Screen app, its cookie and its notifications keep
+   * working when the computer moves), then one per network interface.
+   */
   addresses(): string[] {
+    const named = (this.options.extraHostnames ?? [])
+      .map((name) => name.trim())
+      .filter(Boolean)
+      .map((name) => `${this.scheme}://${name}:${this.boundPort}`);
+    return [...named, ...this.interfaceAddresses()];
+  }
+
+  private interfaceAddresses(): string[] {
     const hosts = this.isWildcardHost()
       ? Object.values(os.networkInterfaces())
           .flatMap((infos) => infos ?? [])
@@ -234,6 +247,7 @@ export class BrowserAccessServer {
   createPairingCode(): BrowserPairingCode {
     const pending = this.devices.createCode();
     const url = `${this.addresses()[0] ?? ""}${PAIR_PATH}?code=${pending.code}`;
+    // The link opens a page with the code filled in; tapping its button pairs the device.
     return {
       code: pending.code,
       expiresAt: new Date(pending.expiresAt).toISOString(),
@@ -409,30 +423,47 @@ export class BrowserAccessServer {
         if (this.deviceFor(request)) redirect(response, "/");
         else await pairNewDevice();
       } else {
-        this.sendPairingPage(
-          request,
-          response,
-          "That pairing link no longer works. Enter a new code.",
-        );
+        this.sendPairingPage(request, response, {
+          error: "That pairing link no longer works. Enter a new code.",
+        });
       }
       return;
     }
     if (code) {
-      if (this.devices.consumeCode(code)) await pairNewDevice();
-      else this.sendPairingPage(request, response, "That code is not valid or has expired.");
+      if (this.deviceFor(request)) {
+        redirect(response, "/");
+      } else if (url.searchParams.get("confirm") !== "1") {
+        // Opening a link only shows the page: a link preview or a scanner's quick look must not
+        // pair its own browser. The device pairs when someone taps the button.
+        if (this.devices.isValidCode(code)) this.sendPairingPage(request, response, { code });
+        else
+          this.sendPairingPage(request, response, {
+            error: "That code is not valid or has expired.",
+          });
+      } else if (this.devices.consumeCode(code)) {
+        await pairNewDevice();
+      } else {
+        this.sendPairingPage(request, response, {
+          error: "That code is not valid or has expired.",
+        });
+      }
       return;
     }
     if (this.deviceFor(request)) redirect(response, "/");
     else this.sendPairingPage(request, response);
   }
 
-  private sendPairingPage(request: IncomingMessage, response: ServerResponse, error?: string) {
+  private sendPairingPage(
+    request: IncomingMessage,
+    response: ServerResponse,
+    options: { readonly error?: string; readonly code?: string } = {},
+  ) {
     sendBody(
       request,
       response,
-      error ? 403 : 200,
+      options.error ? 403 : 200,
       "text/html; charset=utf-8",
-      pairingPageHtml(error ? { error } : {}),
+      pairingPageHtml(options),
     );
   }
 

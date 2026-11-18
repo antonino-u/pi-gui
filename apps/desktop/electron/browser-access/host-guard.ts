@@ -28,7 +28,10 @@ export function localHostnames(extraHostnames: readonly string[] = []): Readonly
   const hostname = os.hostname().toLowerCase();
   if (hostname) {
     names.add(hostname);
-    if (!hostname.endsWith(".local")) names.add(`${hostname}.local`);
+    // Bonjour answers for the first label (`mac.local`) even when the host name carries
+    // another domain, such as `mac.localdomain` from a router.
+    const label = hostname.split(".")[0];
+    if (label) names.add(`${label}.local`);
   }
   for (const extra of extraHostnames) {
     const name = extra.trim().toLowerCase();

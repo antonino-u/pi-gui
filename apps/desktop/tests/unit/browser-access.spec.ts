@@ -1,3 +1,4 @@
+import { hostname } from "node:os";
 import { expect, test } from "@playwright/test";
 import {
   browserAccessBlockedMembers,
@@ -82,6 +83,9 @@ test("the Host header must name this machine", () => {
   expect(isAllowedHost("STUDIO.home.arpa:7480", allowed)).toBe(true);
   expect(isAllowedHost("attacker.example:7480", allowed)).toBe(false);
   expect(isAllowedHost(undefined, allowed)).toBe(false);
+  // The Bonjour name is the host name's first label, even when the name has another domain.
+  const label = hostname().toLowerCase().split(".")[0] ?? "";
+  expect(isAllowedHost(`${label}.local:7480`, allowed)).toBe(true);
   expect(hostnameFromHostHeader("[fe80::1]:80")).toBe("fe80::1");
   expect(hostnameFromHostHeader("fe80::1")).toBe("fe80::1");
 });

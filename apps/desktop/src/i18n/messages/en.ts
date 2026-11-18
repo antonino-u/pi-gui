@@ -174,7 +174,7 @@ export const en = {
   "settings.browserAccess.copyAddress": "Copy address",
   "settings.browserAccess.groupPair": "Pair a device",
   "settings.browserAccess.pair.description":
-    "A device needs pairing once. A code works one time and expires after five minutes.",
+    "A device needs pairing once. A code pairs up to four browsers and expires after five minutes. On iPhone, pair Safari and the Home Screen app separately: enter the code in each.",
   "settings.browserAccess.pair.title": "New pairing code",
   "settings.browserAccess.pair.action": "Pair a device",
   "settings.browserAccess.pair.qrAlt": "QR code that pairs a device",
